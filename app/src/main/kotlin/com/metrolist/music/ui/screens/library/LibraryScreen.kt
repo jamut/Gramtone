@@ -41,7 +41,7 @@ fun LibraryScreen() {
     var libraryViewType by rememberEnumPreference(AlbumViewTypeKey, LibraryViewType.GRID)
     var playlistViewType by rememberEnumPreference(PlaylistViewTypeKey, LibraryViewType.GRID)
 
-    var showTelegram by rememberSaveable { mutableStateOf(false) }
+    var showTelegram by rememberSaveable { mutableStateOf(true) }
 
     val filterContent = @Composable {
         Row {

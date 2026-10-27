@@ -56,7 +56,11 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
             val chatId = dataSpec.uri.host!!.toLong()
             val messageId = dataSpec.uri.pathSegments[0].toLong()
             val msg = TelegramClient.call(TdApi.GetMessage(chatId, messageId))
-            val file = (msg.content as TdApi.MessageAudio).audio.audio
+            val file = when (val c = msg.content) {
+                is TdApi.MessageAudio -> c.audio.audio
+                is TdApi.MessageDocument -> c.document.document // music sent as a plain file
+                else -> throw IOException("Message is not an audio file")
+            }
             fileId = file.id
             fileSize = file.size
         } catch (e: Exception) {

@@ -73,7 +73,7 @@ import java.io.File
 private fun fmt(sec: Int): String = if (sec <= 0) "" else "%d:%02d".format(sec / 60, sec % 60)
 
 private fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
-    tracks.groupBy { it.albumKey }.map { (key, list) ->
+    tracks.filter { it.album.isNotBlank() }.groupBy { it.albumKey }.map { (key, list) ->
         val sorted = list.sortedWith(compareBy({ it.discNo }, { it.trackNo }, { it.title.lowercase() }))
         TgAlbum(
             key = key,
@@ -85,9 +85,16 @@ private fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
         )
     }.sortedBy { it.title.lowercase() }
 
-private fun buildArtists(albums: List<TgAlbum>): List<TgArtist> =
-    albums.groupBy { it.artist }.map { (name, list) ->
-        TgArtist(name, list.size, list.sumOf { it.tracks.size }, list.firstNotNullOfOrNull { it.coverPath })
+private fun artistOf(t: TgTrack): String = t.albumArtist.ifBlank { t.artist }.ifBlank { "Unknown artist" }
+
+private fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
+    tracks.groupBy { artistOf(it) }.map { (name, list) ->
+        TgArtist(
+            name = name,
+            albums = list.filter { it.album.isNotBlank() }.map { it.albumKey }.distinct().size,
+            tracks = list.size,
+            coverPath = list.firstNotNullOfOrNull { it.coverPath },
+        )
     }.sortedBy { it.name.lowercase() }
 
 @Composable
@@ -227,7 +234,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
     BackHandler(enabled = openAlbum != null) { openAlbum = null }
 
     val albums = remember(tracks) { buildAlbums(tracks) }
-    val artists = remember(albums) { buildArtists(albums) }
+    val artists = remember(tracks) { buildArtists(tracks) }
     val q = query.trim().lowercase()
 
     fun play(list: List<TgTrack>, index: Int, title: String) {
@@ -260,7 +267,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
     when (tab) {
         0 -> {
             val list = tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
-                .filter { artistFilter == null || (it.albumArtist.ifBlank { it.displayArtist }) == artistFilter }
+                .filter { artistFilter == null || artistOf(it) == artistFilter }
                 .sortedBy { it.title.lowercase() }
             LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item { header() }
@@ -309,14 +316,14 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                 item { header() }
                 items(list, key = { it.name }) { a ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { artistFilter = a.name; tab = 1 }.padding(horizontal = 16.dp, vertical = 8.dp),
+                        Modifier.fillMaxWidth().clickable { artistFilter = a.name; tab = 0 }.padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TgCover(a.coverPath, 48.dp)
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
-                            Text("${a.albums} albums • ${a.tracks} songs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (a.albums > 0) "${a.albums} albums • ${a.tracks} songs" else "${a.tracks} songs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

@@ -152,7 +152,7 @@ object TelegramCatalog {
         put("indexed", if (indexed) 1 else 0)
     }
 
-    private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 1) {
+    private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
@@ -163,6 +163,10 @@ object TelegramCatalog {
             )
         }
 
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        // v2: tag reader was rewritten, so throw the old (empty-tag) rows away and re-read everything
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            db.execSQL("DROP TABLE IF EXISTS $TABLE")
+            onCreate(db)
+        }
     }
 }

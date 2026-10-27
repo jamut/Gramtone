@@ -9,12 +9,18 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.drinkless.tdlib.TdApi
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Scans a Telegram chat for music and fills [TelegramCatalog] (tags, albums, covers). */
 object TelegramSync {
@@ -113,50 +119,87 @@ object TelegramSync {
         }
     }
 
-    private fun enrich(context: Context) {
+    private class NameInfo(val track: Int, val artist: String, val title: String)
+
+    private val trackPrefix = Regex("""^\s*(\d{1,3})\s*[.\-_)]\s*""")
+
+    /** "1. BELLA.mp3" -> track 1, "BELLA";  "Artist - Song.flac" -> artist + title. */
+    private fun fromFileName(name: String): NameInfo {
+        var base = name.substringBeforeLast('.').replace('_', ' ').trim()
+        var track = 0
+        trackPrefix.find(base)?.let {
+            track = it.groupValues[1].toIntOrNull() ?: 0
+            base = base.substring(it.range.last + 1).trim()
+        }
+        var artist = ""
+        var title = base
+        if (" - " in base) {
+            artist = base.substringBefore(" - ").trim()
+            title = base.substringAfter(" - ").trim()
+        }
+        return NameInfo(track, artist, title)
+    }
+
+    private val coverLock = Any()
+
+    private suspend fun enrich(context: Context) = coroutineScope {
         val todo = TelegramCatalog.unindexed()
         val coverDir = TelegramCatalog.coverDir(context)
-        todo.forEachIndexed { index, t ->
-            _state.value = State.Indexing(index, todo.size)
-            var updated = t.copy(indexed = true)
-            var fileId = 0
-            try {
-                val msg = TelegramClient.call(TdApi.GetMessage(t.chatId, t.messageId))
-                val i = info(msg)
-                if (i != null) {
-                    fileId = i.file.id
-                    val reader = TelegramFileReader(i.file.id, i.file.size)
-                    val tags = try { TelegramTagReader.read(reader) } finally { reader.close() }
-                    if (tags != null) {
-                        val album = tags.album ?: ""
-                        val artist = tags.artist ?: t.artist
-                        val albumArtist = tags.albumArtist ?: ""
-                        var cover: String? = null
-                        if (tags.cover != null) {
-                            val key = if (album.isBlank()) "t_${t.messageId}" else TelegramCatalog.albumKey(albumArtist.ifBlank { artist }, album)
-                            val f = File(coverDir, "$key.jpg")
-                            cover = if (f.exists()) f.absolutePath else TelegramTagReader.saveCover(tags.cover, f)
-                        }
-                        updated = t.copy(
-                            title = tags.title ?: t.title,
-                            artist = artist,
-                            albumArtist = albumArtist,
-                            album = album,
-                            year = tags.year,
-                            trackNo = tags.trackNo,
-                            discNo = tags.discNo,
-                            durationSec = if (tags.durationSec > 0) tags.durationSec else t.durationSec,
-                            coverPath = cover,
-                            indexed = true,
-                        )
+        val done = AtomicInteger(0)
+        val gate = Semaphore(4)
+        _state.value = State.Indexing(0, todo.size)
+        todo.map { t ->
+            async {
+                gate.withPermit { enrichOne(t, coverDir) }
+                val d = done.incrementAndGet()
+                _state.value = State.Indexing(d, todo.size)
+                if (d % 25 == 0) TelegramCatalog.refresh()
+            }
+        }.awaitAll()
+        Unit
+    }
+
+    private fun enrichOne(t: TgTrack, coverDir: File) {
+        var updated = t.copy(indexed = true)
+        var fileId = 0
+        try {
+            val msg = TelegramClient.call(TdApi.GetMessage(t.chatId, t.messageId))
+            val i = info(msg)
+            if (i != null) {
+                fileId = i.file.id
+                val fn = fromFileName(i.fileName)
+                val reader = TelegramFileReader(i.file.id, i.file.size)
+                val tags = try { TelegramTagReader.read(reader) } finally { reader.close() }
+
+                val title = tags?.title ?: i.title.ifBlank { fn.title.ifBlank { t.title } }
+                val artist = tags?.artist ?: i.performer.ifBlank { fn.artist }
+                val albumArtist = tags?.albumArtist ?: ""
+                val album = tags?.album ?: ""
+                var cover: String? = null
+                if (tags?.cover != null) {
+                    val key = if (album.isBlank()) "t_${t.messageId}" else TelegramCatalog.albumKey(albumArtist.ifBlank { artist }, album)
+                    val f = File(coverDir, "$key.jpg")
+                    cover = synchronized(coverLock) {
+                        if (f.exists()) f.absolutePath else TelegramTagReader.saveCover(tags.cover, f)
                     }
                 }
-            } catch (e: Exception) {
-                // keep the basic info from Telegram; don't retry forever
+                updated = t.copy(
+                    title = title,
+                    artist = artist,
+                    albumArtist = albumArtist,
+                    album = album,
+                    year = tags?.year ?: 0,
+                    trackNo = tags?.trackNo?.takeIf { it > 0 } ?: fn.track,
+                    discNo = tags?.discNo ?: 0,
+                    durationSec = tags?.durationSec?.takeIf { it > 0 } ?: t.durationSec,
+                    coverPath = cover,
+                    indexed = true,
+                )
             }
-            TelegramCatalog.update(updated)
-            if (fileId != 0) TelegramClient.deleteLocalFile(fileId) // don't let tag-reading fill the phone
-            if (index % 5 == 4) TelegramCatalog.refresh()
+        } catch (e: Exception) {
+            // keep the basic info from Telegram; don't retry forever
         }
+        TelegramCatalog.update(updated)
+        if (fileId != 0) TelegramClient.deleteLocalFile(fileId) // don't let tag-reading fill the phone
     }
 }
