@@ -54,6 +54,12 @@
             android:process=":crash" />
 
         <activity
+            android:name=".telegram.TelegramTestActivity"
+            android:exported="true"
+            android:label="Telegram PoC"
+            android:theme="@style/Theme.Metrolist" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"

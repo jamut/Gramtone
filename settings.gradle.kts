@@ -27,6 +27,7 @@ dependencyResolutionManagement {
                 } else {
                     includeGroup("com.github.MetrolistGroup.innertubex")
                 }
+                includeGroup("com.github.fazilus")
             }
         }
         google()

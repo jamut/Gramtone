@@ -3507,6 +3507,7 @@ class MusicService :
                     .Factory()
                     .setCache(playerCache)
                     .setUpstreamDataSourceFactory(
+                        com.metrolist.music.telegram.TelegramDataSource.RoutingFactory(
                         DefaultDataSource.Factory(
                             this,
                             OkHttpDataSource.Factory(
@@ -3522,6 +3523,7 @@ class MusicService :
                                         } ?: response.request
                                     }.build(),
                             ),
+                        ),
                         ),
                     ),
             ).setCacheWriteDataSinkFactory(null)
@@ -3811,6 +3813,9 @@ class MusicService :
     ): DataSource.Factory {
         return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
             val mediaId = dataSpec.key ?: error("No media id")
+            if (com.metrolist.music.telegram.TelegramUri.isTelegramId(mediaId)) {
+                return@Factory dataSpec.withUri(com.metrolist.music.telegram.TelegramUri.uriForSongId(mediaId))
+            }
             val storedFormat = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
             applyAudioNormalizationBeforePlayback(
                 processor = normalizationProcessor,

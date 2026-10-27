@@ -73,6 +73,9 @@ class App :
         // process claim WebView's data directory and crash the next main-process WebView.
         if (!isMainProcess()) return
 
+        // Resume the saved Telegram session (no-op until the user has logged in once).
+        com.metrolist.music.telegram.TelegramClient.autoStart(this)
+
         // Install crash handler first
         CrashHandler.install(this)
         ArtistNameAliases.initialize(this)

@@ -1,0 +1,563 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 0f331cf..96992cf 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -283,6 +283,7 @@ dependencies {
+     implementation(libs.shimmer)
+ 
+     implementation(libs.media3)
++    implementation(libs.tdlib.android)
+     implementation(libs.media3.session)
+     implementation(libs.media3.okhttp)
+ 
+diff --git a/app/proguard-rules.pro b/app/proguard-rules.pro
+index 901bd6e..0d62b4b 100644
+--- a/app/proguard-rules.pro
++++ b/app/proguard-rules.pro
+@@ -195,3 +195,7 @@
+ -keepclasseswithmembers class com.metrolist.shazamkit.models.** {
+     kotlinx.serialization.KSerializer serializer(...);
+ }
++
++# Telegram TDLib JNI
++-keep class org.drinkless.tdlib.** { *; }
++-keepclassmembers class org.drinkless.tdlib.** { *; }
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 369a2b1..f236431 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -53,6 +53,12 @@
+             android:excludeFromRecents="true"
+             android:process=":crash" />
+ 
++        <activity
++            android:name=".telegram.TelegramTestActivity"
++            android:exported="true"
++            android:label="Telegram PoC"
++            android:theme="@style/Theme.Metrolist" />
++
+         <activity
+             android:name=".MainActivity"
+             android:exported="true"
+diff --git a/app/src/main/kotlin/com/metrolist/music/App.kt b/app/src/main/kotlin/com/metrolist/music/App.kt
+index 0400f37..3d69a3a 100644
+--- a/app/src/main/kotlin/com/metrolist/music/App.kt
++++ b/app/src/main/kotlin/com/metrolist/music/App.kt
+@@ -73,6 +73,9 @@ class App :
+         // process claim WebView's data directory and crash the next main-process WebView.
+         if (!isMainProcess()) return
+ 
++        // Resume the saved Telegram session (no-op until the user has logged in once).
++        com.metrolist.music.telegram.TelegramClient.autoStart(this)
++
+         // Install crash handler first
+         CrashHandler.install(this)
+         ArtistNameAliases.initialize(this)
+diff --git a/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt b/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt
+index a5f6d61..c4e2188 100644
+--- a/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt
++++ b/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt
+@@ -3507,6 +3507,7 @@ class MusicService :
+                     .Factory()
+                     .setCache(playerCache)
+                     .setUpstreamDataSourceFactory(
++                        com.metrolist.music.telegram.TelegramDataSource.RoutingFactory(
+                         DefaultDataSource.Factory(
+                             this,
+                             OkHttpDataSource.Factory(
+@@ -3523,6 +3524,7 @@ class MusicService :
+                                     }.build(),
+                             ),
+                         ),
++                        ),
+                     ),
+             ).setCacheWriteDataSinkFactory(null)
+             .setFlags(FLAG_IGNORE_CACHE_ON_ERROR)
+@@ -3811,6 +3813,9 @@ class MusicService :
+     ): DataSource.Factory {
+         return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
+             val mediaId = dataSpec.key ?: error("No media id")
++            if (com.metrolist.music.telegram.TelegramUri.isTelegramId(mediaId)) {
++                return@Factory dataSpec.withUri(com.metrolist.music.telegram.TelegramUri.uriForSongId(mediaId))
++            }
+             val storedFormat = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
+             applyAudioNormalizationBeforePlayback(
+                 processor = normalizationProcessor,
+diff --git a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt
+new file mode 100644
+index 0000000..dd53021
+--- /dev/null
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt
+@@ -0,0 +1,131 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.content.Context
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import org.drinkless.tdlib.Client
++import org.drinkless.tdlib.TdApi
++import java.util.concurrent.CountDownLatch
++import java.util.concurrent.TimeUnit
++
++/** Thin wrapper over TDLib: auth state, blocking requests, ranged file download. */
++object TelegramClient {
++    enum class AuthState { NOT_STARTED, WAIT_PHONE, WAIT_CODE, WAIT_PASSWORD, READY, ERROR }
++
++    private val _auth = MutableStateFlow(AuthState.NOT_STARTED)
++    val auth: StateFlow<AuthState> = _auth
++
++    private var client: Client? = null
++    private var apiId = 0
++    private var apiHash = ""
++    private lateinit var appContext: Context
++
++    @Synchronized
++    fun start(context: Context, apiId: Int, apiHash: String) {
++        if (client != null) return
++        appContext = context.applicationContext
++        this.apiId = apiId
++        this.apiHash = apiHash
++        Client.execute(TdApi.SetLogVerbosityLevel(1))
++        client = Client.create({ update -> onUpdate(update) }, null, null)
++    }
++
++    /** Restart the saved session after process death (TDLib keeps the login on disk). */
++    fun autoStart(context: Context) {
++        val prefs = context.getSharedPreferences("tg_poc", Context.MODE_PRIVATE)
++        val id = prefs.getString("id", null)?.toIntOrNull() ?: return
++        val hash = prefs.getString("hash", null) ?: return
++        start(context, id, hash)
++    }
++
++    /** Blocks until logged in; used by the player before it reads from Telegram. */
++    fun awaitReady(timeoutSec: Long = 20) {
++        val deadline = System.currentTimeMillis() + timeoutSec * 1000
++        while (_auth.value != AuthState.READY) {
++            if (System.currentTimeMillis() > deadline) error("Telegram not logged in")
++            Thread.sleep(100)
++        }
++    }
++
++    private fun onUpdate(update: TdApi.Object) {
++        if (update is TdApi.UpdateAuthorizationState) {
++            when (update.authorizationState) {
++                is TdApi.AuthorizationStateWaitTdlibParameters -> {
++                    val p = TdApi.SetTdlibParameters()
++                    p.databaseDirectory = appContext.filesDir.absolutePath + "/tdlib"
++                    // Partially downloaded audio lives here; see trimCache().
++                    p.filesDirectory = appContext.cacheDir.absolutePath + "/tdlib_files"
++                    p.databaseEncryptionKey = ByteArray(0)
++                    p.useFileDatabase = true
++                    p.useChatInfoDatabase = true
++                    p.useMessageDatabase = true
++                    p.useSecretChats = false
++                    p.apiId = apiId
++                    p.apiHash = apiHash
++                    p.systemLanguageCode = "en"
++                    p.deviceModel = "Android"
++                    p.systemVersion = android.os.Build.VERSION.RELEASE
++                    p.applicationVersion = "1.0"
++                    client?.send(p, null)
++                }
++                is TdApi.AuthorizationStateWaitPhoneNumber -> _auth.value = AuthState.WAIT_PHONE
++                is TdApi.AuthorizationStateWaitCode -> _auth.value = AuthState.WAIT_CODE
++                is TdApi.AuthorizationStateWaitPassword -> _auth.value = AuthState.WAIT_PASSWORD
++                is TdApi.AuthorizationStateReady -> {
++                    _auth.value = AuthState.READY
++                    trimCache() // drop chunks left over from earlier sessions
++                }
++                is TdApi.AuthorizationStateClosed -> { client = null; _auth.value = AuthState.NOT_STARTED }
++                else -> Unit
++            }
++        }
++    }
++
++    fun submitPhone(phone: String) { client?.send(TdApi.SetAuthenticationPhoneNumber(phone, null), null) }
++    fun submitCode(code: String) { client?.send(TdApi.CheckAuthenticationCode(code), null) }
++    fun submitPassword(pw: String) { client?.send(TdApi.CheckAuthenticationPassword(pw), null) }
++
++    /** Blocking request. Never call on the main thread. */
++    @Suppress("UNCHECKED_CAST")
++    fun <T : TdApi.Object> call(fn: TdApi.Function<T>, timeoutSec: Long = 60): T {
++        val c = client ?: error("Telegram client not started")
++        var result: TdApi.Object? = null
++        val latch = CountDownLatch(1)
++        c.send(fn) { result = it; latch.countDown() }
++        if (!latch.await(timeoutSec, TimeUnit.SECONDS)) error("Telegram request timed out")
++        val r = result
++        if (r is TdApi.Error) error("Telegram error ${r.code}: ${r.message}")
++        return r as T
++    }
++
++    fun listChats(): List<TdApi.Chat> {
++        runCatching { call(TdApi.LoadChats(TdApi.ChatListMain(), 100)) } // 404 when all loaded
++        val ids = call(TdApi.GetChats(TdApi.ChatListMain(), 100)).chatIds
++        return ids.map { call(TdApi.GetChat(it)) }
++    }
++
++    /** Audio messages of a chat, newest first. Pages with getChatHistory (stable API across TDLib versions). */
++    fun listAudio(chatId: Long, maxCount: Int = 200): List<TdApi.Message> {
++        val out = ArrayList<TdApi.Message>()
++        var from = 0L
++        while (out.size < maxCount) {
++            val msgs = call(TdApi.GetChatHistory(chatId, from, 0, 50, false)).messages
++            if (msgs.isEmpty()) break
++            msgs.filterTo(out) { it.content is TdApi.MessageAudio }
++            from = msgs.last().id
++        }
++        return out
++    }
++
++    /** Delete downloaded chunks so Telegram streaming doesn't eat phone storage. */
++    fun trimCache() {
++        // size=0, ttl=0, count=0 -> delete everything older than the 300s immunity window
++        // (so the track currently playing survives).
++        client?.send(TdApi.OptimizeStorage(0L, 0, 0, 300, null, null, null, false, 0), null)
++    }
++}
+diff --git a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt
+new file mode 100644
+index 0000000..62aa7ee
+--- /dev/null
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt
+@@ -0,0 +1,155 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.net.Uri
++import androidx.media3.common.C
++import androidx.media3.common.util.UnstableApi
++import androidx.media3.datasource.BaseDataSource
++import androidx.media3.datasource.DataSource
++import androidx.media3.datasource.DataSpec
++import org.drinkless.tdlib.TdApi
++import java.io.IOException
++import java.io.RandomAccessFile
++
++/** URI format: tg://<chatId>/<messageId> */
++object TelegramUri {
++    const val SCHEME = "tg"
++    const val ID_PREFIX = "tg_" // song ids look like tg_<chatId>_<messageId>
++
++    fun songId(chatId: Long, messageId: Long) = "$ID_PREFIX${chatId}_$messageId"
++    fun isTelegramId(id: String) = id.startsWith(ID_PREFIX)
++
++    /** tg_<chat>_<msg> -> tg://<chat>/<msg>. Chat ids can be negative, so split on the last underscore. */
++    fun uriForSongId(id: String): Uri {
++        val body = id.removePrefix(ID_PREFIX)
++        val i = body.lastIndexOf('_')
++        return Uri.parse("$SCHEME://${body.substring(0, i)}/${body.substring(i + 1)}")
++    }
++}
++
++/**
++ * Streams a Telegram audio file through TDLib by downloading only the byte
++ * range ExoPlayer asks for, so a whole FLAC never has to be stored.
++ */
++@UnstableApi
++class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
++    private var currentUri: Uri? = null
++    private var fileId = 0
++    private var fileSize = 0L
++    private var path: String? = null
++    private var raf: RandomAccessFile? = null
++    private var position = 0L
++    private var bytesRemaining = 0L
++    private var opened = false
++    private var availStart = 0L // byte window known to be on disk
++    private var availEnd = 0L
++
++    override fun open(dataSpec: DataSpec): Long {
++        currentUri = dataSpec.uri
++        transferInitializing(dataSpec)
++        try {
++            TelegramClient.awaitReady()
++            val chatId = dataSpec.uri.host!!.toLong()
++            val messageId = dataSpec.uri.pathSegments[0].toLong()
++            val msg = TelegramClient.call(TdApi.GetMessage(chatId, messageId))
++            val file = (msg.content as TdApi.MessageAudio).audio.audio
++            fileId = file.id
++            fileSize = file.size
++        } catch (e: Exception) {
++            throw IOException("Telegram resolve failed: ${e.message}", e)
++        }
++        position = dataSpec.position
++        bytesRemaining =
++            if (dataSpec.length != C.LENGTH_UNSET.toLong()) dataSpec.length
++            else fileSize - position
++        if (bytesRemaining < 0) throw IOException("Position beyond end of file")
++        opened = true
++        transferStarted(dataSpec)
++        return bytesRemaining
++    }
++
++    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
++        if (length == 0) return 0
++        if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
++        val want = minOf(length.toLong(), bytesRemaining).toInt()
++        val available = ensureDownloaded(position, want)
++        val r = raf ?: throw IOException("File not open")
++        r.seek(position)
++        val n = r.read(buffer, offset, minOf(want.toLong(), available).toInt())
++        if (n <= 0) return C.RESULT_END_OF_INPUT
++        position += n
++        bytesRemaining -= n
++        bytesTransferred(n)
++        return n
++    }
++
++    /** Makes sure [pos, pos+want) is on disk; returns how many bytes from pos are readable. */
++    private fun ensureDownloaded(pos: Long, want: Int): Long {
++        if (path != null && pos >= availStart && pos < availEnd) return availEnd - pos
++        val chunk = maxOf(want.toLong(), CHUNK)
++        val f = try {
++            TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true))
++        } catch (e: Exception) {
++            throw IOException("Telegram download failed: ${e.message}", e)
++        }
++        val local = f.local
++        if (path != local.path) {
++            raf?.close()
++            raf = RandomAccessFile(local.path, "r")
++            path = local.path
++        }
++        // downloadedPrefixSize counts from downloadOffset
++        val readable = local.downloadOffset + local.downloadedPrefixSize - pos
++        if (readable <= 0) throw IOException("Telegram returned no data at $pos")
++        availStart = pos
++        availEnd = pos + readable
++        return readable
++    }
++
++    override fun getUri(): Uri? = currentUri
++
++    override fun close() {
++        raf?.close(); raf = null; path = null
++        currentUri = null
++        availStart = 0; availEnd = 0
++        if (opened) { opened = false; transferEnded() }
++    }
++
++    class Factory : DataSource.Factory {
++        override fun createDataSource(): DataSource = TelegramDataSource()
++    }
++
++    /** Routes tg:// to Telegram, everything else to the normal upstream. */
++    class RoutingFactory(private val upstream: DataSource.Factory) : DataSource.Factory {
++        override fun createDataSource(): DataSource = Routing(upstream.createDataSource(), TelegramDataSource())
++    }
++
++    private class Routing(
++        private val default: DataSource,
++        private val telegram: DataSource,
++    ) : DataSource {
++        private var active: DataSource = default
++
++        override fun addTransferListener(l: androidx.media3.datasource.TransferListener) {
++            default.addTransferListener(l); telegram.addTransferListener(l)
++        }
++
++        override fun open(dataSpec: DataSpec): Long {
++            active = if (dataSpec.uri.scheme == TelegramUri.SCHEME) telegram else default
++            return active.open(dataSpec)
++        }
++
++        override fun read(buffer: ByteArray, offset: Int, length: Int) = active.read(buffer, offset, length)
++        override fun getUri() = active.uri
++        override fun getResponseHeaders() = active.responseHeaders
++        override fun close() = active.close()
++    }
++
++    companion object {
++        private const val CHUNK = 512L * 1024
++    }
++}
+diff --git a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTestActivity.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTestActivity.kt
+new file mode 100644
+index 0000000..2ed5ece
+--- /dev/null
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTestActivity.kt
+@@ -0,0 +1,150 @@
++/**
++ * Metrolist Telegram source (experimental) - proof-of-concept screen.
++ * Login -> pick channel -> tap a track -> it streams through MusicService.
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.content.ComponentName
++import android.content.Intent
++import android.content.ServiceConnection
++import android.os.Build
++import android.os.Bundle
++import android.os.IBinder
++import androidx.activity.ComponentActivity
++import androidx.activity.compose.setContent
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.items
++import androidx.compose.material3.Button
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Surface
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.unit.dp
++import androidx.core.content.ContextCompat
++import androidx.media3.common.MediaItem
++import com.metrolist.music.models.MediaMetadata as MetrolistMetadata
++import com.metrolist.music.extensions.toMediaItem
++import com.metrolist.music.playback.MusicService
++import com.metrolist.music.playback.MusicService.MusicBinder
++import com.metrolist.music.playback.queues.ListQueue
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import org.drinkless.tdlib.TdApi
++
++class TelegramTestActivity : ComponentActivity() {
++    private var service: MusicService? = null
++
++    private val conn = object : ServiceConnection {
++        override fun onServiceConnected(n: ComponentName?, b: IBinder?) { service = (b as? MusicBinder)?.service }
++        override fun onServiceDisconnected(n: ComponentName?) { service = null }
++    }
++
++    override fun onCreate(savedInstanceState: Bundle?) {
++        super.onCreate(savedInstanceState)
++        if (!MusicService.isRunning) {
++            val i = Intent(this, MusicService::class.java)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) ContextCompat.startForegroundService(this, i) else startService(i)
++        }
++        bindService(Intent(this, MusicService::class.java), conn, BIND_AUTO_CREATE)
++        setContent { MaterialTheme { Surface(Modifier.fillMaxSize()) { Screen() } } }
++    }
++
++    override fun onDestroy() { runCatching { unbindService(conn) }; super.onDestroy() }
++
++    private fun buildItem(chatId: Long, m: TdApi.Message): MediaItem {
++        val a = (m.content as TdApi.MessageAudio).audio
++        val md = MetrolistMetadata(
++            id = TelegramUri.songId(chatId, m.id),
++            title = a.title.ifBlank { a.fileName },
++            artists = listOf(MetrolistMetadata.Artist(id = null, name = a.performer.ifBlank { "Unknown" })),
++            duration = a.duration,
++        )
++        return md.toMediaItem()
++    }
++
++    @Composable
++    private fun Screen() {
++        val scope = rememberCoroutineScope()
++        val auth by TelegramClient.auth.collectAsState()
++        val prefs = remember { getSharedPreferences("tg_poc", MODE_PRIVATE) }
++        var apiId by remember { mutableStateOf(prefs.getString("id", "") ?: "") }
++        var apiHash by remember { mutableStateOf(prefs.getString("hash", "") ?: "") }
++        var input by remember { mutableStateOf("") }
++        var chats by remember { mutableStateOf<List<TdApi.Chat>>(emptyList()) }
++        var tracks by remember { mutableStateOf<List<TdApi.Message>>(emptyList()) }
++        var chatId by remember { mutableStateOf(0L) }
++        var status by remember { mutableStateOf("") }
++
++        Column(Modifier.padding(16.dp)) {
++            Text("Telegram PoC - $auth  $status")
++            when (auth) {
++                TelegramClient.AuthState.NOT_STARTED, TelegramClient.AuthState.ERROR -> {
++                    OutlinedTextField(apiId, { apiId = it }, label = { Text("api_id (my.telegram.org)") })
++                    OutlinedTextField(apiHash, { apiHash = it }, label = { Text("api_hash") })
++                    Button(onClick = {
++                        prefs.edit().putString("id", apiId).putString("hash", apiHash).apply()
++                        TelegramClient.start(applicationContext, apiId.trim().toInt(), apiHash.trim())
++                    }) { Text("Start") }
++                }
++                TelegramClient.AuthState.WAIT_PHONE -> {
++                    OutlinedTextField(input, { input = it }, label = { Text("Phone, e.g. +639...") })
++                    Button(onClick = { TelegramClient.submitPhone(input.trim()); input = "" }) { Text("Send code") }
++                }
++                TelegramClient.AuthState.WAIT_CODE -> {
++                    OutlinedTextField(input, { input = it }, label = { Text("Login code") })
++                    Button(onClick = { TelegramClient.submitCode(input.trim()); input = "" }) { Text("Submit") }
++                }
++                TelegramClient.AuthState.WAIT_PASSWORD -> {
++                    OutlinedTextField(input, { input = it }, label = { Text("2FA password") })
++                    Button(onClick = { TelegramClient.submitPassword(input); input = "" }) { Text("Submit") }
++                }
++                TelegramClient.AuthState.READY -> {
++                    if (chats.isEmpty()) {
++                        Button(onClick = {
++                            scope.launch {
++                                status = "loading chats"
++                                chats = withContext(Dispatchers.IO) { runCatching { TelegramClient.listChats() }.getOrElse { status = it.message ?: "error"; emptyList() } }
++                            }
++                        }) { Text("Load my chats / channels") }
++                    }
++                    if (tracks.isEmpty()) {
++                        LazyColumn { items(chats) { c ->
++                            Text(c.title, Modifier.fillMaxWidth().clickable {
++                                scope.launch {
++                                    status = "scanning ${c.title}"
++                                    chatId = c.id
++                                    tracks = withContext(Dispatchers.IO) { runCatching { TelegramClient.listAudio(c.id) }.getOrElse { status = it.message ?: "error"; emptyList() } }
++                                    status = "${tracks.size} tracks"
++                                }
++                            }.padding(12.dp))
++                        } }
++                    } else {
++                        LazyColumn { items(tracks.size) { idx ->
++                            val a = (tracks[idx].content as TdApi.MessageAudio).audio
++                            Text("${a.performer} - ${a.title.ifBlank { a.fileName }}", Modifier.fillMaxWidth().clickable {
++                                val items = tracks.map { buildItem(chatId, it) }
++                                service?.playQueue(ListQueue(title = "Telegram", items = items, startIndex = idx))
++                            }.padding(12.dp))
++                        } }
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 5ba92cf..e20fbfc 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -71,6 +71,7 @@ shimmer = { module = "com.valentinilk.shimmer:compose-shimmer", version.ref = "s
+ 
+ palette = { module = "androidx.palette:palette", version.ref = "palette" }
+ 
++tdlib-android = { module = "com.github.fazilus:tdlib-android", version = "1.8.61" }
+ media3 = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
+ media3-okhttp = { module = "androidx.media3:media3-datasource-okhttp", version.ref = "media3" }
+ media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 89a01c9..0dc9302 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -27,6 +27,7 @@ dependencyResolutionManagement {
+                 } else {
+                     includeGroup("com.github.MetrolistGroup.innertubex")
+                 }
++                includeGroup("com.github.fazilus")
+             }
+         }
+         google()

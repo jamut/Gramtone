@@ -283,6 +283,7 @@ dependencies {
     implementation(libs.shimmer)
 
     implementation(libs.media3)
+    implementation(libs.tdlib.android)
     implementation(libs.media3.session)
     implementation(libs.media3.okhttp)
 
