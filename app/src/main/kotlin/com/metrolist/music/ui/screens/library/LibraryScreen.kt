@@ -7,10 +7,20 @@ package com.metrolist.music.ui.screens.library
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
+import com.metrolist.music.telegram.TelegramLibraryScreen
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.metrolist.music.LocalNavController
@@ -23,6 +33,7 @@ import com.metrolist.music.constants.PlaylistViewTypeKey
 import com.metrolist.music.ui.component.ChipsRow
 import com.metrolist.music.utils.rememberEnumPreference
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen() {
     val navController = LocalNavController.current
@@ -30,8 +41,17 @@ fun LibraryScreen() {
     var libraryViewType by rememberEnumPreference(AlbumViewTypeKey, LibraryViewType.GRID)
     var playlistViewType by rememberEnumPreference(PlaylistViewTypeKey, LibraryViewType.GRID)
 
+    var showTelegram by rememberSaveable { mutableStateOf(false) }
+
     val filterContent = @Composable {
         Row {
+            Spacer(Modifier.width(12.dp))
+            FilterChip(
+                selected = false,
+                onClick = { showTelegram = true },
+                label = { Text("Telegram") },
+                shape = RoundedCornerShape(16.dp),
+            )
             ChipsRow(
                 chips = listOf(
                     LibraryFilter.PLAYLISTS to stringResource(R.string.filter_playlists),
@@ -50,6 +70,10 @@ fun LibraryScreen() {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        if (showTelegram) {
+            TelegramLibraryScreen(onBack = { showTelegram = false })
+            return@Box
+        }
         when (filterType) {
             LibraryFilter.LIBRARY -> LibraryMixScreen(
                 navController = navController,

@@ -1,0 +1,1023 @@
+diff -urN a/.github/workflows/telegram-build.yml b/.github/workflows/telegram-build.yml
+--- a/.github/workflows/telegram-build.yml	1970-01-01 00:00:00.000000000 +0000
++++ b/.github/workflows/telegram-build.yml	2026-10-27 06:44:46.111512401 +0000
+@@ -0,0 +1,41 @@
++name: Build Telegram APK
++
++on:
++  workflow_dispatch:
++  push:
++
++jobs:
++  build:
++    runs-on: ubuntu-latest
++    timeout-minutes: 45
++
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Set up JDK 21
++        uses: actions/setup-java@v4
++        with:
++          java-version: "21"
++          distribution: "temurin"
++
++      - name: Set up Gradle
++        uses: gradle/actions/setup-gradle@v4
++
++      - name: Make gradlew executable
++        run: chmod +x gradlew
++
++      # Same signing key on every build, so each new APK installs OVER the old one
++      # (keeps your Telegram login). This is a throwaway debug key, not a secret.
++      - name: Install fixed debug keystore
++        run: |
++          mkdir -p ~/.android
++          echo "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" | base64 -d > ~/.android/debug.keystore
++
++      - name: Build FOSS debug APK
++        run: ./gradlew --console=plain :app:assembleFossDebug -x lint --warning-mode summary
++
++      - name: Upload APK
++        uses: actions/upload-artifact@v4
++        with:
++          name: metrolist-telegram-apk
++          path: app/build/outputs/apk/**/*.apk
+diff -urN a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramCatalog.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramCatalog.kt
+--- a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramCatalog.kt	1970-01-01 00:00:00.000000000 +0000
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramCatalog.kt	2026-10-27 06:44:15.092439993 +0000
+@@ -0,0 +1,168 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.content.ContentValues
++import android.content.Context
++import android.database.sqlite.SQLiteDatabase
++import android.database.sqlite.SQLiteOpenHelper
++import android.net.Uri
++import androidx.media3.common.MediaItem
++import com.metrolist.music.extensions.toMediaItem
++import com.metrolist.music.models.MediaMetadata
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import java.io.File
++
++/** One song that lives in a Telegram chat. */
++data class TgTrack(
++    val id: String,
++    val chatId: Long,
++    val messageId: Long,
++    val title: String,
++    val artist: String,
++    val albumArtist: String,
++    val album: String,
++    val year: Int,
++    val trackNo: Int,
++    val discNo: Int,
++    val durationSec: Int,
++    val fileName: String,
++    val coverPath: String?,
++    val indexed: Boolean,
++) {
++    /** Stable key used to group tracks into albums. */
++    val albumKey: String get() = TelegramCatalog.albumKey(albumArtist.ifBlank { artist }, album)
++    val displayArtist: String get() = artist.ifBlank { albumArtist }.ifBlank { "Unknown artist" }
++    val displayAlbum: String get() = album.ifBlank { "Unknown album" }
++}
++
++data class TgAlbum(
++    val key: String,
++    val title: String,
++    val artist: String,
++    val year: Int,
++    val coverPath: String?,
++    val tracks: List<TgTrack>,
++)
++
++data class TgArtist(val name: String, val albums: Int, val tracks: Int, val coverPath: String?)
++
++fun TgTrack.toMediaItem(): MediaItem =
++    MediaMetadata(
++        id = id,
++        title = title,
++        artists = listOf(MediaMetadata.Artist(id = null, name = displayArtist)),
++        duration = durationSec,
++        thumbnailUrl = coverPath?.let { Uri.fromFile(File(it)).toString() },
++    ).toMediaItem()
++
++/** Local SQLite catalog of everything found in the Telegram music chat. Separate from Metrolist's own database. */
++object TelegramCatalog {
++    private const val DB_NAME = "telegram_catalog.db"
++    private const val TABLE = "tracks"
++
++    private var helper: Helper? = null
++    private val _tracks = MutableStateFlow<List<TgTrack>>(emptyList())
++    val tracks: StateFlow<List<TgTrack>> = _tracks
++
++    @Synchronized
++    fun init(context: Context) {
++        if (helper != null) return
++        helper = Helper(context.applicationContext)
++        refresh()
++    }
++
++    private val db: SQLiteDatabase get() = helper!!.writableDatabase
++
++    fun albumKey(artist: String, album: String): String =
++        (artist.trim().lowercase() + "|" + album.trim().lowercase()).hashCode().toUInt().toString(16)
++
++    fun coverDir(context: Context): File = File(context.filesDir, "tg_covers").also { it.mkdirs() }
++
++    fun knownIds(): Set<String> {
++        val out = HashSet<String>()
++        db.rawQuery("SELECT id FROM $TABLE", null).use { c -> while (c.moveToNext()) out.add(c.getString(0)) }
++        return out
++    }
++
++    fun insertBasic(t: TgTrack) {
++        db.insertWithOnConflict(TABLE, null, t.toValues(), SQLiteDatabase.CONFLICT_IGNORE)
++    }
++
++    fun update(t: TgTrack) {
++        db.insertWithOnConflict(TABLE, null, t.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
++    }
++
++    fun unindexed(): List<TgTrack> = query("indexed = 0")
++
++    fun clear() {
++        db.delete(TABLE, null, null)
++        refresh()
++    }
++
++    fun refresh() {
++        _tracks.value = query(null)
++    }
++
++    private fun query(where: String?): List<TgTrack> {
++        val out = ArrayList<TgTrack>()
++        db.rawQuery("SELECT * FROM $TABLE" + (where?.let { " WHERE $it" } ?: ""), null).use { c ->
++            while (c.moveToNext()) {
++                out.add(
++                    TgTrack(
++                        id = c.getString(c.getColumnIndexOrThrow("id")),
++                        chatId = c.getLong(c.getColumnIndexOrThrow("chat_id")),
++                        messageId = c.getLong(c.getColumnIndexOrThrow("message_id")),
++                        title = c.getString(c.getColumnIndexOrThrow("title")),
++                        artist = c.getString(c.getColumnIndexOrThrow("artist")),
++                        albumArtist = c.getString(c.getColumnIndexOrThrow("album_artist")),
++                        album = c.getString(c.getColumnIndexOrThrow("album")),
++                        year = c.getInt(c.getColumnIndexOrThrow("year")),
++                        trackNo = c.getInt(c.getColumnIndexOrThrow("track_no")),
++                        discNo = c.getInt(c.getColumnIndexOrThrow("disc_no")),
++                        durationSec = c.getInt(c.getColumnIndexOrThrow("duration")),
++                        fileName = c.getString(c.getColumnIndexOrThrow("file_name")),
++                        coverPath = c.getString(c.getColumnIndexOrThrow("cover_path")),
++                        indexed = c.getInt(c.getColumnIndexOrThrow("indexed")) == 1,
++                    ),
++                )
++            }
++        }
++        return out
++    }
++
++    private fun TgTrack.toValues() = ContentValues().apply {
++        put("id", id)
++        put("chat_id", chatId)
++        put("message_id", messageId)
++        put("title", title)
++        put("artist", artist)
++        put("album_artist", albumArtist)
++        put("album", album)
++        put("year", year)
++        put("track_no", trackNo)
++        put("disc_no", discNo)
++        put("duration", durationSec)
++        put("file_name", fileName)
++        put("cover_path", coverPath)
++        put("indexed", if (indexed) 1 else 0)
++    }
++
++    private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 1) {
++        override fun onCreate(db: SQLiteDatabase) {
++            db.execSQL(
++                """CREATE TABLE $TABLE (
++                    id TEXT PRIMARY KEY, chat_id INTEGER, message_id INTEGER,
++                    title TEXT, artist TEXT, album_artist TEXT, album TEXT,
++                    year INTEGER, track_no INTEGER, disc_no INTEGER, duration INTEGER,
++                    file_name TEXT, cover_path TEXT, indexed INTEGER)""",
++            )
++        }
++
++        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
++    }
++}
+diff -urN a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt
+--- a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt	2026-10-27 06:44:15.085270716 +0000
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt	2026-10-27 06:44:15.092412423 +0000
+@@ -122,6 +122,10 @@
+         return out
+     }
+ 
++    fun deleteLocalFile(fileId: Int) {
++        client?.send(TdApi.DeleteFile(fileId), null)
++    }
++
+     /** Delete downloaded chunks so Telegram streaming doesn't eat phone storage. */
+     fun trimCache() {
+         // size=0, ttl=0, count=0 -> delete everything older than the 300s immunity window
+diff -urN a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt
+--- a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt	1970-01-01 00:00:00.000000000 +0000
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt	2026-10-27 06:44:15.092500258 +0000
+@@ -0,0 +1,444 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++@file:OptIn(ExperimentalMaterial3Api::class)
++
++package com.metrolist.music.telegram
++
++import android.content.Context
++import androidx.activity.compose.BackHandler
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.horizontalScroll
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.aspectRatio
++import androidx.compose.foundation.layout.asPaddingValues
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.grid.GridCells
++import androidx.compose.foundation.lazy.grid.GridItemSpan
++import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
++import androidx.compose.foundation.lazy.grid.items as gridItems
++import androidx.compose.foundation.lazy.items
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material3.Button
++import androidx.compose.material3.ExperimentalMaterial3Api
++import androidx.compose.material3.FilterChip
++import androidx.compose.material3.Icon
++import androidx.compose.material3.LinearProgressIndicator
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.layout.ContentScale
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.res.painterResource
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import coil3.compose.AsyncImage
++import com.metrolist.music.LocalPlayerAwareWindowInsets
++import com.metrolist.music.LocalPlayerConnection
++import com.metrolist.music.R
++import com.metrolist.music.playback.queues.ListQueue
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
++import org.drinkless.tdlib.TdApi
++import java.io.File
++
++private fun fmt(sec: Int): String = if (sec <= 0) "" else "%d:%02d".format(sec / 60, sec % 60)
++
++private fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
++    tracks.groupBy { it.albumKey }.map { (key, list) ->
++        val sorted = list.sortedWith(compareBy({ it.discNo }, { it.trackNo }, { it.title.lowercase() }))
++        TgAlbum(
++            key = key,
++            title = sorted.first().displayAlbum,
++            artist = sorted.first().albumArtist.ifBlank { sorted.first().displayArtist },
++            year = sorted.maxOf { it.year },
++            coverPath = sorted.firstNotNullOfOrNull { it.coverPath },
++            tracks = sorted,
++        )
++    }.sortedBy { it.title.lowercase() }
++
++private fun buildArtists(albums: List<TgAlbum>): List<TgArtist> =
++    albums.groupBy { it.artist }.map { (name, list) ->
++        TgArtist(name, list.size, list.sumOf { it.tracks.size }, list.firstNotNullOfOrNull { it.coverPath })
++    }.sortedBy { it.name.lowercase() }
++
++@Composable
++fun TelegramLibraryScreen(onBack: () -> Unit) {
++    val context = LocalContext.current
++    val prefs = remember { context.getSharedPreferences("tg_poc", Context.MODE_PRIVATE) }
++    LaunchedEffect(Unit) {
++        TelegramCatalog.init(context)
++        TelegramClient.autoStart(context)
++    }
++    val auth by TelegramClient.auth.collectAsState()
++    var chatId by remember { mutableStateOf(prefs.getLong("chat_id", 0L)) }
++
++    when {
++        auth != TelegramClient.AuthState.READY -> TgLoginPanel(prefs, onBack)
++        chatId == 0L -> TgChannelPicker(onBack) { id, title ->
++            prefs.edit().putLong("chat_id", id).putString("chat_title", title).apply()
++            TelegramCatalog.clear()
++            chatId = id
++        }
++        else -> TgLibrary(
++            chatId = chatId,
++            onBack = onBack,
++            onChangeChannel = {
++                prefs.edit().remove("chat_id").apply()
++                chatId = 0L
++            },
++        )
++    }
++}
++
++@Composable
++private fun TgLoginPanel(prefs: android.content.SharedPreferences, onBack: () -> Unit) {
++    val context = LocalContext.current
++    val auth by TelegramClient.auth.collectAsState()
++    var apiId by remember { mutableStateOf(prefs.getString("id", "") ?: "") }
++    var apiHash by remember { mutableStateOf(prefs.getString("hash", "") ?: "") }
++    var input by remember { mutableStateOf("") }
++
++    Column(
++        Modifier.fillMaxSize().padding(LocalPlayerAwareWindowInsets.current.asPaddingValues()).padding(16.dp),
++        verticalArrangement = Arrangement.spacedBy(8.dp),
++    ) {
++        TextButton(onClick = onBack) { Text("< Back to library") }
++        Text("Connect Telegram", style = MaterialTheme.typography.titleLarge)
++        when (auth) {
++            TelegramClient.AuthState.NOT_STARTED, TelegramClient.AuthState.ERROR -> {
++                Text("Get api_id and api_hash at my.telegram.org", style = MaterialTheme.typography.bodyMedium)
++                OutlinedTextField(apiId, { apiId = it }, label = { Text("api_id") }, singleLine = true)
++                OutlinedTextField(apiHash, { apiHash = it }, label = { Text("api_hash") }, singleLine = true)
++                Button(onClick = {
++                    val idNum = apiId.trim().toIntOrNull()
++                    if (idNum != null && apiHash.isNotBlank()) {
++                        prefs.edit().putString("id", apiId.trim()).putString("hash", apiHash.trim()).apply()
++                        TelegramClient.start(context.applicationContext, idNum, apiHash.trim())
++                    }
++                }) { Text("Start") }
++            }
++            TelegramClient.AuthState.WAIT_PHONE -> {
++                OutlinedTextField(input, { input = it }, label = { Text("Phone, e.g. +639...") }, singleLine = true)
++                Button(onClick = { TelegramClient.submitPhone(input.trim()); input = "" }) { Text("Send code") }
++            }
++            TelegramClient.AuthState.WAIT_CODE -> {
++                OutlinedTextField(input, { input = it }, label = { Text("Login code") }, singleLine = true)
++                Button(onClick = { TelegramClient.submitCode(input.trim()); input = "" }) { Text("Submit") }
++            }
++            TelegramClient.AuthState.WAIT_PASSWORD -> {
++                OutlinedTextField(input, { input = it }, label = { Text("2FA password") }, singleLine = true)
++                Button(onClick = { TelegramClient.submitPassword(input); input = "" }) { Text("Submit") }
++            }
++            TelegramClient.AuthState.READY -> Text("Connected")
++        }
++    }
++}
++
++@Composable
++private fun TgChannelPicker(onBack: () -> Unit, onPicked: (Long, String) -> Unit) {
++    val scope = rememberCoroutineScope()
++    var chats by remember { mutableStateOf<List<TdApi.Chat>>(emptyList()) }
++    var status by remember { mutableStateOf("") }
++
++    LaunchedEffect(Unit) {
++        status = "Loading chats..."
++        chats = withContext(Dispatchers.IO) {
++            runCatching { TelegramClient.listChats() }.getOrElse { status = it.message ?: "Error"; emptyList() }
++        }
++        if (chats.isNotEmpty()) status = ""
++    }
++
++    LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++        item {
++            Column(Modifier.padding(16.dp)) {
++                TextButton(onClick = onBack) { Text("< Back to library") }
++                Text("Pick your music channel", style = MaterialTheme.typography.titleLarge)
++                if (status.isNotEmpty()) Text(status)
++            }
++        }
++        items(chats, key = { it.id }) { c ->
++            Text(
++                c.title,
++                style = MaterialTheme.typography.bodyLarge,
++                modifier = Modifier.fillMaxWidth().clickable { scope.launch { onPicked(c.id, c.title) } }.padding(horizontal = 16.dp, vertical = 14.dp),
++            )
++        }
++    }
++}
++
++@Composable
++private fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
++    val shape = RoundedCornerShape(8.dp)
++    if (path != null) {
++        AsyncImage(
++            model = File(path),
++            contentDescription = null,
++            contentScale = ContentScale.Crop,
++            modifier = modifier.size(size).clip(shape),
++        )
++    } else {
++        Box(modifier.size(size).clip(shape), contentAlignment = Alignment.Center) {
++            Icon(painterResource(R.drawable.library_music_outlined), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
++        }
++    }
++}
++
++@Composable
++private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> Unit) {
++    val context = LocalContext.current
++    val tracks by TelegramCatalog.tracks.collectAsState()
++    val sync by TelegramSync.state.collectAsState()
++    val playerConnection = LocalPlayerConnection.current
++    var tab by rememberSaveable { mutableStateOf(0) } // 0 songs, 1 albums, 2 artists
++    var openAlbum by rememberSaveable { mutableStateOf<String?>(null) }
++    var artistFilter by rememberSaveable { mutableStateOf<String?>(null) }
++    var query by rememberSaveable { mutableStateOf("") }
++
++    LaunchedEffect(chatId) { TelegramSync.start(context, chatId) }
++    BackHandler(enabled = openAlbum != null) { openAlbum = null }
++
++    val albums = remember(tracks) { buildAlbums(tracks) }
++    val artists = remember(albums) { buildArtists(albums) }
++    val q = query.trim().lowercase()
++
++    fun play(list: List<TgTrack>, index: Int, title: String) {
++        if (list.isEmpty()) return
++        playerConnection?.playQueue(ListQueue(title = title, items = list.map { it.toMediaItem() }, startIndex = index))
++    }
++
++    val header: @Composable () -> Unit = {
++        TgHeader(
++            tab = tab,
++            onTab = { tab = it; openAlbum = null },
++            query = query,
++            onQuery = { query = it },
++            artistFilter = artistFilter,
++            onClearArtist = { artistFilter = null },
++            sync = sync,
++            songCount = tracks.size,
++            onBack = onBack,
++            onSync = { TelegramSync.start(context, chatId) },
++            onChangeChannel = onChangeChannel,
++        )
++    }
++
++    val album = openAlbum?.let { key -> albums.firstOrNull { it.key == key } }
++    if (album != null) {
++        TgAlbumDetail(album, onClose = { openAlbum = null }, onPlay = { i -> play(album.tracks, i, album.title) }, onShuffle = { play(album.tracks.shuffled(), 0, album.title) })
++        return
++    }
++
++    when (tab) {
++        0 -> {
++            val list = tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
++                .filter { artistFilter == null || (it.albumArtist.ifBlank { it.displayArtist }) == artistFilter }
++                .sortedBy { it.title.lowercase() }
++            LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++                item { header() }
++                items(list, key = { it.id }) { t ->
++                    Row(
++                        Modifier.fillMaxWidth().clickable { play(list, list.indexOf(t), "Telegram") }.padding(horizontal = 16.dp, vertical = 8.dp),
++                        verticalAlignment = Alignment.CenterVertically,
++                    ) {
++                        TgCover(t.coverPath, 48.dp)
++                        Spacer(Modifier.width(12.dp))
++                        Column(Modifier.weight(1f)) {
++                            Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
++                            Text("${t.displayArtist} • ${t.displayAlbum}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                        }
++                        Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                    }
++                }
++            }
++        }
++        1 -> {
++            val list = albums.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) }
++                .filter { artistFilter == null || it.artist == artistFilter }
++            LazyVerticalGrid(columns = GridCells.Adaptive(150.dp), contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++                item(span = { GridItemSpan(maxLineSpan) }) { header() }
++                gridItems(list, key = { it.key }) { a ->
++                    Column(Modifier.padding(8.dp).clickable { openAlbum = a.key }) {
++                        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
++                            if (a.coverPath != null) {
++                                AsyncImage(model = File(a.coverPath), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
++                            } else {
++                                Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
++                                    Icon(painterResource(R.drawable.library_music_outlined), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
++                                }
++                            }
++                        }
++                        Spacer(Modifier.height(6.dp))
++                        Text(a.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
++                        Text(listOfNotNull(a.artist, a.year.takeIf { it > 0 }?.toString()).joinToString(" • "), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                    }
++                }
++            }
++        }
++        else -> {
++            val list = artists.filter { q.isEmpty() || it.name.lowercase().contains(q) }
++            LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++                item { header() }
++                items(list, key = { it.name }) { a ->
++                    Row(
++                        Modifier.fillMaxWidth().clickable { artistFilter = a.name; tab = 1 }.padding(horizontal = 16.dp, vertical = 8.dp),
++                        verticalAlignment = Alignment.CenterVertically,
++                    ) {
++                        TgCover(a.coverPath, 48.dp)
++                        Spacer(Modifier.width(12.dp))
++                        Column {
++                            Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
++                            Text("${a.albums} albums • ${a.tracks} songs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++@Composable
++private fun TgHeader(
++    tab: Int,
++    onTab: (Int) -> Unit,
++    query: String,
++    onQuery: (String) -> Unit,
++    artistFilter: String?,
++    onClearArtist: () -> Unit,
++    sync: TelegramSync.State,
++    songCount: Int,
++    onBack: () -> Unit,
++    onSync: () -> Unit,
++    onChangeChannel: () -> Unit,
++) {
++    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
++        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++            FilterChip(
++                selected = true,
++                onClick = onBack,
++                label = { Text("Telegram") },
++                shape = RoundedCornerShape(16.dp),
++                leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
++            )
++            listOf("Songs", "Albums", "Artists").forEachIndexed { i, label ->
++                FilterChip(selected = tab == i, onClick = { onTab(i) }, label = { Text(label) }, shape = RoundedCornerShape(16.dp))
++            }
++            if (artistFilter != null) {
++                FilterChip(
++                    selected = true,
++                    onClick = onClearArtist,
++                    label = { Text(artistFilter, maxLines = 1, overflow = TextOverflow.Ellipsis) },
++                    shape = RoundedCornerShape(16.dp),
++                    leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
++                )
++            }
++        }
++        Spacer(Modifier.height(8.dp))
++        OutlinedTextField(
++            value = query,
++            onValueChange = onQuery,
++            placeholder = { Text("Search your Telegram music") },
++            singleLine = true,
++            modifier = Modifier.fillMaxWidth(),
++        )
++        when (sync) {
++            is TelegramSync.State.Scanning -> {
++                Text("Scanning channel... ${sync.found} found", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
++                LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
++            }
++            is TelegramSync.State.Indexing -> {
++                Text("Reading tags and covers ${sync.done}/${sync.total}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
++                LinearProgressIndicator(progress = { if (sync.total == 0) 0f else sync.done / sync.total.toFloat() }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
++            }
++            is TelegramSync.State.Failed -> {
++                Text("Sync failed: ${sync.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
++                TextButton(onClick = onSync) { Text("Retry") }
++            }
++            TelegramSync.State.Idle -> {
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    Text("$songCount songs", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
++                    TextButton(onClick = onSync) { Text("Sync") }
++                    TextButton(onClick = onChangeChannel) { Text("Change channel") }
++                }
++            }
++        }
++    }
++}
++
++@Composable
++private fun TgAlbumDetail(album: TgAlbum, onClose: () -> Unit, onPlay: (Int) -> Unit, onShuffle: () -> Unit) {
++    LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++        item {
++            Column(Modifier.fillMaxWidth().padding(16.dp)) {
++                FilterChip(
++                    selected = true,
++                    onClick = onClose,
++                    label = { Text("Albums") },
++                    shape = RoundedCornerShape(16.dp),
++                    leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
++                )
++                Spacer(Modifier.height(12.dp))
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    TgCover(album.coverPath, 120.dp)
++                    Spacer(Modifier.width(16.dp))
++                    Column {
++                        Text(album.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
++                        Text(album.artist, style = MaterialTheme.typography.bodyMedium)
++                        Text(
++                            listOfNotNull(album.year.takeIf { it > 0 }?.toString(), "${album.tracks.size} songs").joinToString(" • "),
++                            style = MaterialTheme.typography.bodySmall,
++                            color = MaterialTheme.colorScheme.onSurfaceVariant,
++                        )
++                    }
++                }
++                Spacer(Modifier.height(12.dp))
++                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    Button(onClick = { onPlay(0) }) { Text("Play") }
++                    OutlinedButton(onClick = onShuffle) { Text("Shuffle") }
++                }
++            }
++        }
++        items(album.tracks.size, key = { album.tracks[it].id }) { i ->
++            val t = album.tracks[i]
++            Row(
++                Modifier.fillMaxWidth().clickable { onPlay(i) }.padding(horizontal = 16.dp, vertical = 10.dp),
++                verticalAlignment = Alignment.CenterVertically,
++            ) {
++                Text(if (t.trackNo > 0) t.trackNo.toString() else "${i + 1}", modifier = Modifier.width(28.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                Column(Modifier.weight(1f)) {
++                    Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
++                    Text(t.displayArtist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                }
++                Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++            }
++        }
++    }
++}
+diff -urN a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSync.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSync.kt
+--- a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSync.kt	1970-01-01 00:00:00.000000000 +0000
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSync.kt	2026-10-27 06:44:15.092479745 +0000
+@@ -0,0 +1,162 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.content.Context
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.launch
++import org.drinkless.tdlib.TdApi
++import java.io.File
++
++/** Scans a Telegram chat for music and fills [TelegramCatalog] (tags, albums, covers). */
++object TelegramSync {
++    sealed class State {
++        object Idle : State()
++        data class Scanning(val found: Int) : State()
++        data class Indexing(val done: Int, val total: Int) : State()
++        data class Failed(val message: String) : State()
++    }
++
++    private val _state = MutableStateFlow<State>(State.Idle)
++    val state: StateFlow<State> = _state
++
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    private var job: Job? = null
++
++    private val audioExt = setOf("mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "alac", "wma", "aiff", "ape", "wv")
++
++    private class Info(val file: TdApi.File, val fileName: String, val title: String, val performer: String, val duration: Int)
++
++    private fun info(m: TdApi.Message): Info? =
++        when (val c = m.content) {
++            is TdApi.MessageAudio -> {
++                val a = c.audio
++                Info(a.audio, a.fileName ?: "", a.title ?: "", a.performer ?: "", a.duration)
++            }
++            is TdApi.MessageDocument -> {
++                val d = c.document
++                val ext = (d.fileName ?: "").substringAfterLast('.', "").lowercase()
++                if (ext in audioExt || (d.mimeType ?: "").startsWith("audio/")) {
++                    Info(d.document, d.fileName ?: "", "", "", 0)
++                } else null
++            }
++            else -> null
++        }
++
++    val isRunning: Boolean get() = job?.isActive == true
++
++    fun start(context: Context, chatId: Long) {
++        if (isRunning) return
++        val app = context.applicationContext
++        TelegramCatalog.init(app)
++        job = scope.launch {
++            try {
++                TelegramClient.awaitReady()
++                scan(chatId)
++                enrich(app)
++                TelegramCatalog.refresh()
++                _state.value = State.Idle
++            } catch (e: Exception) {
++                TelegramCatalog.refresh()
++                _state.value = State.Failed(e.message ?: "Sync failed")
++            }
++        }
++    }
++
++    private fun scan(chatId: Long) {
++        val known = TelegramCatalog.knownIds()
++        var from = 0L
++        var found = 0
++        var emptyPages = 0
++        while (true) {
++            val msgs = TelegramClient.call(TdApi.GetChatHistory(chatId, from, 0, 100, false)).messages
++            if (msgs.isEmpty()) {
++                if (++emptyPages >= 2) break else continue
++            }
++            emptyPages = 0
++            for (m in msgs) {
++                val i = info(m) ?: continue
++                found++
++                val id = TelegramUri.songId(chatId, m.id)
++                if (id in known) continue
++                val baseName = i.fileName.substringBeforeLast('.').ifBlank { "Track ${m.id}" }
++                TelegramCatalog.insertBasic(
++                    TgTrack(
++                        id = id,
++                        chatId = chatId,
++                        messageId = m.id,
++                        title = i.title.ifBlank { baseName },
++                        artist = i.performer,
++                        albumArtist = "",
++                        album = "",
++                        year = 0,
++                        trackNo = 0,
++                        discNo = 0,
++                        durationSec = i.duration,
++                        fileName = i.fileName,
++                        coverPath = null,
++                        indexed = false,
++                    ),
++                )
++            }
++            from = msgs.last().id
++            _state.value = State.Scanning(found)
++            TelegramCatalog.refresh()
++        }
++    }
++
++    private fun enrich(context: Context) {
++        val todo = TelegramCatalog.unindexed()
++        val coverDir = TelegramCatalog.coverDir(context)
++        todo.forEachIndexed { index, t ->
++            _state.value = State.Indexing(index, todo.size)
++            var updated = t.copy(indexed = true)
++            var fileId = 0
++            try {
++                val msg = TelegramClient.call(TdApi.GetMessage(t.chatId, t.messageId))
++                val i = info(msg)
++                if (i != null) {
++                    fileId = i.file.id
++                    val reader = TelegramFileReader(i.file.id, i.file.size)
++                    val tags = try { TelegramTagReader.read(reader) } finally { reader.close() }
++                    if (tags != null) {
++                        val album = tags.album ?: ""
++                        val artist = tags.artist ?: t.artist
++                        val albumArtist = tags.albumArtist ?: ""
++                        var cover: String? = null
++                        if (tags.cover != null) {
++                            val key = if (album.isBlank()) "t_${t.messageId}" else TelegramCatalog.albumKey(albumArtist.ifBlank { artist }, album)
++                            val f = File(coverDir, "$key.jpg")
++                            cover = if (f.exists()) f.absolutePath else TelegramTagReader.saveCover(tags.cover, f)
++                        }
++                        updated = t.copy(
++                            title = tags.title ?: t.title,
++                            artist = artist,
++                            albumArtist = albumArtist,
++                            album = album,
++                            year = tags.year,
++                            trackNo = tags.trackNo,
++                            discNo = tags.discNo,
++                            durationSec = if (tags.durationSec > 0) tags.durationSec else t.durationSec,
++                            coverPath = cover,
++                            indexed = true,
++                        )
++                    }
++                }
++            } catch (e: Exception) {
++                // keep the basic info from Telegram; don't retry forever
++            }
++            TelegramCatalog.update(updated)
++            if (fileId != 0) TelegramClient.deleteLocalFile(fileId) // don't let tag-reading fill the phone
++            if (index % 5 == 4) TelegramCatalog.refresh()
++        }
++    }
++}
+diff -urN a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTagReader.kt b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTagReader.kt
+--- a/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTagReader.kt	1970-01-01 00:00:00.000000000 +0000
++++ b/app/src/main/kotlin/com/metrolist/music/telegram/TelegramTagReader.kt	2026-10-27 06:44:15.092459807 +0000
+@@ -0,0 +1,113 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.graphics.Bitmap
++import android.graphics.BitmapFactory
++import android.media.MediaDataSource
++import android.media.MediaMetadataRetriever
++import org.drinkless.tdlib.TdApi
++import java.io.File
++import java.io.FileOutputStream
++import java.io.RandomAccessFile
++
++/** Random-access reader over a Telegram file; downloads only the byte ranges that are asked for. */
++class TelegramFileReader(private val fileId: Int, private val fileSize: Long) : MediaDataSource() {
++    private var raf: RandomAccessFile? = null
++    private var path: String? = null
++    private var availStart = 0L
++    private var availEnd = 0L
++
++    override fun getSize(): Long = fileSize
++
++    override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
++        if (position >= fileSize) return -1
++        val want = minOf(size.toLong(), fileSize - position).toInt()
++        if (!(path != null && position >= availStart && position < availEnd)) {
++            val f = TelegramClient.call(TdApi.DownloadFile(fileId, 16, position, maxOf(want.toLong(), CHUNK), true), 120)
++            val local = f.local
++            if (path != local.path) {
++                raf?.close()
++                raf = RandomAccessFile(local.path, "r")
++                path = local.path
++            }
++            val readable = local.downloadOffset + local.downloadedPrefixSize - position
++            if (readable <= 0) return -1
++            availStart = position
++            availEnd = position + readable
++        }
++        val r = raf ?: return -1
++        r.seek(position)
++        return r.read(buffer, offset, minOf(want.toLong(), availEnd - position).toInt())
++    }
++
++    override fun close() {
++        raf?.close(); raf = null; path = null
++    }
++
++    companion object {
++        private const val CHUNK = 512L * 1024
++    }
++}
++
++data class ReadTags(
++    val title: String?,
++    val artist: String?,
++    val albumArtist: String?,
++    val album: String?,
++    val year: Int,
++    val trackNo: Int,
++    val discNo: Int,
++    val durationSec: Int,
++    val cover: ByteArray?,
++)
++
++object TelegramTagReader {
++    /** Reads title/artist/album/year/track/cover from the file's own tags. Returns null if unreadable. */
++    fun read(reader: TelegramFileReader): ReadTags? {
++        val r = MediaMetadataRetriever()
++        return try {
++            r.setDataSource(reader)
++            fun s(k: Int) = r.extractMetadata(k)?.trim()?.takeIf { it.isNotEmpty() }
++            ReadTags(
++                title = s(MediaMetadataRetriever.METADATA_KEY_TITLE),
++                artist = s(MediaMetadataRetriever.METADATA_KEY_ARTIST),
++                albumArtist = s(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
++                album = s(MediaMetadataRetriever.METADATA_KEY_ALBUM),
++                year = s(MediaMetadataRetriever.METADATA_KEY_YEAR)?.take(4)?.toIntOrNull() ?: 0,
++                trackNo = firstInt(s(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)),
++                discNo = firstInt(s(MediaMetadataRetriever.METADATA_KEY_DISC_NUMBER)),
++                durationSec = ((s(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) / 1000).toInt(),
++                cover = r.embeddedPicture,
++            )
++        } catch (e: Exception) {
++            null
++        } finally {
++            runCatching { r.release() }
++        }
++    }
++
++    private fun firstInt(v: String?): Int = v?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0
++
++    /** Saves a downscaled JPEG of the cover (max ~600px) and returns its path. */
++    fun saveCover(bytes: ByteArray, target: File): String? {
++        return try {
++            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
++            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
++            var sample = 1
++            while (bounds.outWidth / sample > 1200) sample *= 2
++            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
++                ?: return null
++            val scaled = if (bmp.width > 600) {
++                Bitmap.createScaledBitmap(bmp, 600, (bmp.height * 600f / bmp.width).toInt().coerceAtLeast(1), true)
++            } else bmp
++            FileOutputStream(target).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
++            target.absolutePath
++        } catch (e: Exception) {
++            null
++        }
++    }
++}
+diff -urN a/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt b/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt
+--- a/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt	2026-10-27 06:44:15.059085703 +0000
++++ b/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt	2026-10-27 06:44:15.090888197 +0000
+@@ -7,10 +7,20 @@
+ 
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material3.ExperimentalMaterial3Api
++import androidx.compose.material3.FilterChip
++import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.saveable.rememberSaveable
+ import androidx.compose.runtime.setValue
++import androidx.compose.ui.unit.dp
++import com.metrolist.music.telegram.TelegramLibraryScreen
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.res.stringResource
+ import com.metrolist.music.LocalNavController
+@@ -23,6 +33,7 @@
+ import com.metrolist.music.ui.component.ChipsRow
+ import com.metrolist.music.utils.rememberEnumPreference
+ 
++@OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ fun LibraryScreen() {
+     val navController = LocalNavController.current
+@@ -30,8 +41,17 @@
+     var libraryViewType by rememberEnumPreference(AlbumViewTypeKey, LibraryViewType.GRID)
+     var playlistViewType by rememberEnumPreference(PlaylistViewTypeKey, LibraryViewType.GRID)
+ 
++    var showTelegram by rememberSaveable { mutableStateOf(false) }
++
+     val filterContent = @Composable {
+         Row {
++            Spacer(Modifier.width(12.dp))
++            FilterChip(
++                selected = false,
++                onClick = { showTelegram = true },
++                label = { Text("Telegram") },
++                shape = RoundedCornerShape(16.dp),
++            )
+             ChipsRow(
+                 chips = listOf(
+                     LibraryFilter.PLAYLISTS to stringResource(R.string.filter_playlists),
+@@ -50,6 +70,10 @@
+     }
+ 
+     Box(modifier = Modifier.fillMaxSize()) {
++        if (showTelegram) {
++            TelegramLibraryScreen(onBack = { showTelegram = false })
++            return@Box
++        }
+         when (filterType) {
+             LibraryFilter.LIBRARY -> LibraryMixScreen(
+                 navController = navController,

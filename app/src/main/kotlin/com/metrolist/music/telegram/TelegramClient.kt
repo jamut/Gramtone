@@ -122,6 +122,10 @@ object TelegramClient {
         return out
     }
 
+    fun deleteLocalFile(fileId: Int) {
+        client?.send(TdApi.DeleteFile(fileId), null)
+    }
+
     /** Delete downloaded chunks so Telegram streaming doesn't eat phone storage. */
     fun trimCache() {
         // size=0, ttl=0, count=0 -> delete everything older than the 300s immunity window
