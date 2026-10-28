@@ -54,15 +54,10 @@
             android:process=":crash" />
 
         <activity
-               android:name=".telegram.TelegramTestActivity"
-               android:exported="true"
-               android:label="Telegram PoC"
-               android:theme="@style/Theme.Metrolist">
-               <intent-filter>
-                   <action android:name="android.intent.action.MAIN" />
-                   <category android:name="android.intent.category.LAUNCHER" />
-               </intent-filter>
-           </activity>
+            android:name=".telegram.TelegramTestActivity"
+            android:exported="false"
+            android:label="Telegram PoC"
+            android:theme="@style/Theme.Metrolist" />
         
         <activity
             android:name=".MainActivity"
