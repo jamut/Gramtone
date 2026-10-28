@@ -1,0 +1,420 @@
+diff -urN a5/app/src/main/kotlin/com/metrolist/music/App.kt b5/app/src/main/kotlin/com/metrolist/music/App.kt
+--- a5/app/src/main/kotlin/com/metrolist/music/App.kt	2026-10-27 11:08:51.597756535 +0000
++++ b5/app/src/main/kotlin/com/metrolist/music/App.kt	2026-10-27 11:09:06.313288935 +0000
+@@ -76,6 +76,7 @@
+         // Resume the saved Telegram session (no-op until the user has logged in once).
+         com.metrolist.music.telegram.TelegramClient.autoStart(this)
+         com.metrolist.music.telegram.MusicSource.init(this)
++        com.metrolist.music.telegram.TelegramOffline.init(this)
+ 
+         // Install crash handler first
+         CrashHandler.install(this)
+diff -urN a5/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt b5/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt
+--- a5/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt	2026-10-27 11:08:51.595274583 +0000
++++ b5/app/src/main/kotlin/com/metrolist/music/playback/MusicService.kt	2026-10-27 11:09:06.310924440 +0000
+@@ -2532,6 +2532,7 @@
+         mediaItem: MediaItem?,
+         reason: Int,
+     ) {
++        com.metrolist.music.telegram.TelegramPrefetcher.onTransition(player)
+         // Only natural completion transitions mark the previous track as fully cached,
+         // never a manual skip or seek. Read lastTransitionedMediaId before replacing it.
+         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+diff -urN a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt
+--- a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt	2026-10-27 11:08:51.592927957 +0000
++++ b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramClient.kt	2026-10-27 11:09:06.306301884 +0000
+@@ -126,10 +126,11 @@
+         client?.send(TdApi.DeleteFile(fileId), null)
+     }
+ 
+-    /** Delete downloaded chunks so Telegram streaming doesn't eat phone storage. */
++    const val CACHE_LIMIT_BYTES = 1_000_000_000L // streaming/prefetch cache cap (~1 GB)
++
++    /** Keep Telegram's streaming cache under the cap; offline downloads live elsewhere and are untouched. */
+     fun trimCache() {
+-        // size=0, ttl=0, count=0 -> delete everything older than the 300s immunity window
+-        // (so the track currently playing survives).
+-        client?.send(TdApi.OptimizeStorage(0L, 0, 0, 300, null, null, null, false, 0), null)
++        // size cap, default age/count limits, files younger than 10 minutes are never deleted
++        client?.send(TdApi.OptimizeStorage(CACHE_LIMIT_BYTES, -1, -1, 600, null, null, null, false, 0), null)
+     }
+ }
+diff -urN a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt
+--- a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt	2026-10-27 11:08:51.590558982 +0000
++++ b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramDataSource.kt	2026-10-27 11:09:06.303996159 +0000
+@@ -52,17 +52,27 @@
+         currentUri = dataSpec.uri
+         transferInitializing(dataSpec)
+         try {
+-            TelegramClient.awaitReady()
+             val chatId = dataSpec.uri.host!!.toLong()
+             val messageId = dataSpec.uri.pathSegments[0].toLong()
+-            val msg = TelegramClient.call(TdApi.GetMessage(chatId, messageId))
+-            val file = when (val c = msg.content) {
+-                is TdApi.MessageAudio -> c.audio.audio
+-                is TdApi.MessageDocument -> c.document.document // music sent as a plain file
+-                else -> throw IOException("Message is not an audio file")
++            val offline = TelegramOffline.fileFor(TelegramUri.songId(chatId, messageId))
++            if (offline != null) {
++                // downloaded for offline use: read straight from the phone, no Telegram needed
++                raf = RandomAccessFile(offline, "r")
++                path = offline.absolutePath
++                fileSize = offline.length()
++                availStart = 0
++                availEnd = fileSize
++            } else {
++                TelegramClient.awaitReady()
++                val msg = TelegramClient.call(TdApi.GetMessage(chatId, messageId))
++                val file = when (val c = msg.content) {
++                    is TdApi.MessageAudio -> c.audio.audio
++                    is TdApi.MessageDocument -> c.document.document // music sent as a plain file
++                    else -> throw IOException("Message is not an audio file")
++                }
++                fileId = file.id
++                fileSize = file.size
+             }
+-            fileId = file.id
+-            fileSize = file.size
+         } catch (e: Exception) {
+             throw IOException("Telegram resolve failed: ${e.message}", e)
+         }
+@@ -94,7 +104,7 @@
+     /** Makes sure [pos, pos+want) is on disk; returns how many bytes from pos are readable. */
+     private fun ensureDownloaded(pos: Long, want: Int): Long {
+         if (path != null && pos >= availStart && pos < availEnd) return availEnd - pos
+-        val chunk = maxOf(want.toLong(), CHUNK)
++        val chunk = maxOf(want.toLong(), if (pos < 1_000_000L) CHUNK else BIG_CHUNK)
+         val f = try {
+             TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true))
+         } catch (e: Exception) {
+@@ -154,6 +164,7 @@
+     }
+ 
+     companion object {
+-        private const val CHUNK = 512L * 1024
++        private const val CHUNK = 512L * 1024 // small first chunk so a song starts fast
++        private const val BIG_CHUNK = 4L * 1024 * 1024 // then bigger reads for smooth playback
+     }
+ }
+diff -urN a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt
+--- a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt	2026-10-27 11:08:51.588099995 +0000
++++ b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt	2026-10-27 11:09:06.301696758 +0000
+@@ -32,7 +32,10 @@
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.shape.RoundedCornerShape
++import androidx.compose.material3.AlertDialog
+ import androidx.compose.material3.Button
++import androidx.compose.material3.CircularProgressIndicator
++import androidx.compose.material3.IconButton
+ import androidx.compose.material3.ExperimentalMaterial3Api
+ import androidx.compose.material3.FilterChip
+ import androidx.compose.material3.Icon
+@@ -222,7 +225,13 @@
+ @Composable
+ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> Unit) {
+     val context = LocalContext.current
+-    val tracks by TelegramCatalog.tracks.collectAsState()
++    val allTracks by TelegramCatalog.tracks.collectAsState()
++    val offlineIds by TelegramOffline.offlineIds.collectAsState()
++    val usedBytes by TelegramOffline.usedBytes.collectAsState()
++    var onlyDownloaded by rememberSaveable { mutableStateOf(false) }
++    val tracks = remember(allTracks, offlineIds, onlyDownloaded) {
++        if (onlyDownloaded) allTracks.filter { it.id in offlineIds } else allTracks
++    }
+     val sync by TelegramSync.state.collectAsState()
+     val playerConnection = LocalPlayerConnection.current
+     var tab by rememberSaveable { mutableStateOf(0) } // 0 songs, 1 albums, 2 artists
+@@ -230,7 +239,10 @@
+     var artistFilter by rememberSaveable { mutableStateOf<String?>(null) }
+     var query by rememberSaveable { mutableStateOf("") }
+ 
+-    LaunchedEffect(chatId) { TelegramSync.start(context, chatId) }
++    LaunchedEffect(chatId) {
++        TelegramOffline.init(context)
++        TelegramSync.start(context, chatId)
++    }
+     BackHandler(enabled = openAlbum != null) { openAlbum = null }
+ 
+     val albums = remember(tracks) { buildAlbums(tracks) }
+@@ -252,6 +264,9 @@
+             onClearArtist = { artistFilter = null },
+             sync = sync,
+             songCount = tracks.size,
++            onlyDownloaded = onlyDownloaded,
++            onToggleDownloaded = { onlyDownloaded = !onlyDownloaded },
++            usedBytes = usedBytes,
+             onBack = onBack,
+             onSync = { TelegramSync.start(context, chatId) },
+             onChangeChannel = onChangeChannel,
+@@ -283,6 +298,7 @@
+                             Text("${t.displayArtist} • ${t.displayAlbum}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                         }
+                         Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                        TgDownloadButton(t)
+                     }
+                 }
+             }
+@@ -342,6 +358,9 @@
+     onClearArtist: () -> Unit,
+     sync: TelegramSync.State,
+     songCount: Int,
++    onlyDownloaded: Boolean,
++    onToggleDownloaded: () -> Unit,
++    usedBytes: Long,
+     onBack: () -> Unit,
+     onSync: () -> Unit,
+     onChangeChannel: () -> Unit,
+@@ -358,6 +377,7 @@
+             listOf("Songs", "Albums", "Artists").forEachIndexed { i, label ->
+                 FilterChip(selected = tab == i, onClick = { onTab(i) }, label = { Text(label) }, shape = RoundedCornerShape(16.dp))
+             }
++            FilterChip(selected = onlyDownloaded, onClick = onToggleDownloaded, label = { Text("Downloaded") }, shape = RoundedCornerShape(16.dp))
+             if (artistFilter != null) {
+                 FilterChip(
+                     selected = true,
+@@ -391,7 +411,7 @@
+             }
+             TelegramSync.State.Idle -> {
+                 Row(verticalAlignment = Alignment.CenterVertically) {
+-                    Text("$songCount songs", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
++                    Text(if (usedBytes > 0) "$songCount songs \u2022 ${fmtBytes(usedBytes)} downloaded" else "$songCount songs", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                     TextButton(onClick = onSync) { Text("Sync") }
+                     TextButton(onClick = onChangeChannel) { Text("Change channel") }
+                 }
+@@ -428,8 +448,14 @@
+                 }
+                 Spacer(Modifier.height(12.dp))
+                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                    val offlineIds by TelegramOffline.offlineIds.collectAsState()
++                    val allOffline = album.tracks.all { it.id in offlineIds }
+                     Button(onClick = { onPlay(0) }) { Text("Play") }
+                     OutlinedButton(onClick = onShuffle) { Text("Shuffle") }
++                    OutlinedButton(onClick = {
++                        if (allOffline) album.tracks.forEach { TelegramOffline.remove(it.id) }
++                        else album.tracks.forEach { TelegramOffline.download(it) }
++                    }) { Text(if (allOffline) "Remove" else "Download") }
+                 }
+             }
+         }
+@@ -445,7 +471,46 @@
+                     Text(t.displayArtist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                 }
+                 Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                TgDownloadButton(t)
++            }
++        }
++    }
++}
++
++internal fun fmtBytes(b: Long): String =
++    if (b >= 1_000_000_000L) "%.1f GB".format(b / 1_000_000_000.0) else "%d MB".format(b / 1_000_000L)
++
++/** Spotify-style download icon: tap to download, spinner while downloading, check when saved on the phone. */
++@Composable
++internal fun TgDownloadButton(t: TgTrack) {
++    val offline by TelegramOffline.offlineIds.collectAsState()
++    val active by TelegramOffline.active.collectAsState()
++    var confirmRemove by remember { mutableStateOf(false) }
++    val percent = active[t.id]
++    when {
++        percent != null -> IconButton(onClick = { TelegramOffline.cancel(t.id) }) {
++            if (percent < 0) {
++                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
++            } else {
++                CircularProgressIndicator(progress = { percent / 100f }, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
++            }
++        }
++        t.id in offline -> {
++            IconButton(onClick = { confirmRemove = true }) {
++                Icon(painterResource(R.drawable.done), contentDescription = "Downloaded", tint = MaterialTheme.colorScheme.primary)
++            }
++            if (confirmRemove) {
++                AlertDialog(
++                    onDismissRequest = { confirmRemove = false },
++                    title = { Text("Remove download?") },
++                    text = { Text(t.title) },
++                    confirmButton = { TextButton(onClick = { confirmRemove = false; TelegramOffline.remove(t.id) }) { Text("Remove") } },
++                    dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
++                )
+             }
+         }
++        else -> IconButton(onClick = { TelegramOffline.download(t) }) {
++            Icon(painterResource(R.drawable.download), contentDescription = "Download")
++        }
+     }
+ }
+diff -urN a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramOffline.kt b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramOffline.kt
+--- a5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramOffline.kt	1970-01-01 00:00:00.000000000 +0000
++++ b5/app/src/main/kotlin/com/metrolist/music/telegram/TelegramOffline.kt	2026-10-27 11:09:06.308596425 +0000
+@@ -0,0 +1,170 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.content.Context
++import androidx.media3.common.Player
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Semaphore
++import kotlinx.coroutines.sync.withPermit
++import org.drinkless.tdlib.TdApi
++import java.io.File
++import java.util.concurrent.ConcurrentHashMap
++
++/** The downloadable file behind a Telegram message (audio message or plain document). */
++internal fun telegramFileOf(msg: TdApi.Message): TdApi.File? =
++    when (val c = msg.content) {
++        is TdApi.MessageAudio -> c.audio.audio
++        is TdApi.MessageDocument -> c.document.document
++        else -> null
++    }
++
++/**
++ * Spotify-style offline downloads. A downloaded song is a full copy in the app's own
++ * folder, so it plays with no internet and is never touched by cache cleanup.
++ */
++object TelegramOffline {
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    private val gate = Semaphore(2)
++    private val jobs = ConcurrentHashMap<String, Job>()
++    private var dir: File? = null
++
++    private val _ids = MutableStateFlow<Set<String>>(emptySet())
++    /** Ids of songs that are fully downloaded. */
++    val offlineIds: StateFlow<Set<String>> = _ids
++
++    private val _active = MutableStateFlow<Map<String, Int>>(emptyMap())
++    /** Songs being downloaded: id -> percent (-1 = waiting in line). */
++    val active: StateFlow<Map<String, Int>> = _active
++
++    private val _bytes = MutableStateFlow(0L)
++    val usedBytes: StateFlow<Long> = _bytes
++
++    @Synchronized
++    fun init(context: Context) {
++        if (dir != null) return
++        dir = File(context.applicationContext.filesDir, "tg_offline").also { it.mkdirs() }
++        dir!!.listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() }
++        refresh()
++    }
++
++    fun fileFor(id: String): File? =
++        dir?.let { File(it, "$id.audio") }?.takeIf { it.exists() && it.length() > 0 }
++
++    private fun refresh() {
++        val files = dir?.listFiles()?.filter { it.name.endsWith(".audio") } ?: emptyList()
++        _ids.value = files.map { it.name.removeSuffix(".audio") }.toSet()
++        _bytes.value = files.sumOf { it.length() }
++    }
++
++    private fun setActive(id: String, percent: Int?) {
++        val m = _active.value.toMutableMap()
++        if (percent == null) m.remove(id) else m[id] = percent
++        _active.value = m
++    }
++
++    fun download(t: TgTrack) {
++        val d = dir ?: return
++        if (fileFor(t.id) != null || jobs.containsKey(t.id)) return
++        setActive(t.id, -1)
++        jobs[t.id] = scope.launch {
++            var tdFileId = 0
++            try {
++                gate.withPermit {
++                    TelegramClient.awaitReady()
++                    val msg = TelegramClient.call(TdApi.GetMessage(t.chatId, t.messageId))
++                    val file = telegramFileOf(msg) ?: error("Not an audio file")
++                    tdFileId = file.id
++                    TelegramClient.call(TdApi.DownloadFile(file.id, 32, 0, 0, false))
++
++                    var lastSize = -1L
++                    var lastChange = System.currentTimeMillis()
++                    while (true) {
++                        val f = TelegramClient.call(TdApi.GetFile(file.id))
++                        val total = maxOf(f.size, f.expectedSize)
++                        val got = f.local.downloadedSize
++                        if (total > 0) setActive(t.id, (got * 100 / total).toInt().coerceIn(0, 99))
++                        if (f.local.isDownloadingCompleted) {
++                            val part = File(d, "${t.id}.part")
++                            File(f.local.path).copyTo(part, overwrite = true)
++                            part.renameTo(File(d, "${t.id}.audio"))
++                            break
++                        }
++                        if (got != lastSize) { lastSize = got; lastChange = System.currentTimeMillis() }
++                        if (System.currentTimeMillis() - lastChange > 60_000) error("Download stalled")
++                        delay(400)
++                    }
++                }
++            } catch (e: CancellationException) {
++                File(d, "${t.id}.part").delete()
++                throw e
++            } catch (e: Exception) {
++                File(d, "${t.id}.part").delete()
++            } finally {
++                if (tdFileId != 0) TelegramClient.deleteLocalFile(tdFileId) // the copy in TDLib's cache is no longer needed
++                jobs.remove(t.id)
++                setActive(t.id, null)
++                refresh()
++            }
++        }
++    }
++
++    fun cancel(id: String) {
++        jobs[id]?.cancel()
++    }
++
++    fun remove(id: String) {
++        cancel(id)
++        dir?.let { File(it, "$id.audio").delete() }
++        refresh()
++    }
++}
++
++/** Keeps the next songs of the queue on the phone so playback never waits on the network. */
++object TelegramPrefetcher {
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
++    private val fileIds = ConcurrentHashMap<String, Int>()
++    private const val AHEAD = 2
++
++    /** Call when the player moves to a new song. */
++    fun onTransition(player: Player) {
++        val count = player.mediaItemCount
++        if (count == 0) return
++        val cur = player.currentMediaItemIndex
++        val ids = (cur + 1..minOf(cur + AHEAD, count - 1))
++            .map { player.getMediaItemAt(it).mediaId }
++            .filter { TelegramUri.isTelegramId(it) }
++        if (ids.isEmpty()) return
++        scope.launch {
++            ids.forEachIndexed { n, id -> prefetch(id, if (n == 0) 20 else 10) }
++            TelegramClient.trimCache()
++        }
++    }
++
++    private fun prefetch(id: String, priority: Int) {
++        if (TelegramOffline.fileFor(id) != null) return // already stored for offline
++        if (TelegramClient.auth.value != TelegramClient.AuthState.READY) return
++        try {
++            val uri = TelegramUri.uriForSongId(id)
++            val chatId = uri.host!!.toLong()
++            val messageId = uri.pathSegments[0].toLong()
++            val fileId = fileIds.getOrPut(id) {
++                telegramFileOf(TelegramClient.call(TdApi.GetMessage(chatId, messageId)))!!.id
++            }
++            TelegramClient.call(TdApi.DownloadFile(fileId, priority, 0, 0, false))
++        } catch (e: Exception) {
++            // prefetch is best effort
++        }
++    }
++}

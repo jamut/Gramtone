@@ -51,14 +51,16 @@ data class TgAlbum(
 
 data class TgArtist(val name: String, val albums: Int, val tracks: Int, val coverPath: String?)
 
-fun TgTrack.toMediaItem(): MediaItem =
+fun TgTrack.toMediaMetadata(): MediaMetadata =
     MediaMetadata(
         id = id,
         title = title,
         artists = listOf(MediaMetadata.Artist(id = null, name = displayArtist)),
         duration = durationSec,
         thumbnailUrl = coverPath?.let { Uri.fromFile(File(it)).toString() },
-    ).toMediaItem()
+    )
+
+fun TgTrack.toMediaItem(): MediaItem = toMediaMetadata().toMediaItem()
 
 /** Local SQLite catalog of everything found in the Telegram music chat. Separate from Metrolist's own database. */
 object TelegramCatalog {

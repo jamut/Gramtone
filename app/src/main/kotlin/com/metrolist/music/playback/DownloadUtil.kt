@@ -100,10 +100,15 @@ constructor(
                 .setCache(playerCache)
                 .setCacheWriteDataSinkFactory(null)
                 .setUpstreamDataSourceFactory(
-                    OkHttpDataSource.Factory(streamHttpClient),
+                    com.metrolist.music.telegram.TelegramDataSource.RoutingFactory(
+                        OkHttpDataSource.Factory(streamHttpClient),
+                    ),
                 ),
         ) { dataSpec ->
             val mediaId = dataSpec.key ?: error("No media id")
+            if (com.metrolist.music.telegram.TelegramUri.isTelegramId(mediaId)) {
+                return@Factory dataSpec.withUri(com.metrolist.music.telegram.TelegramUri.uriForSongId(mediaId))
+            }
             val length = if (dataSpec.length >= 0) dataSpec.length else 1
 
             if (playerCache.isCached(mediaId, dataSpec.position, length)) {

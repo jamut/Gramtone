@@ -52,9 +52,9 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         currentUri = dataSpec.uri
         transferInitializing(dataSpec)
         try {
-            TelegramClient.awaitReady()
             val chatId = dataSpec.uri.host!!.toLong()
             val messageId = dataSpec.uri.pathSegments[0].toLong()
+            TelegramClient.awaitReady()
             val msg = TelegramClient.call(TdApi.GetMessage(chatId, messageId))
             val file = when (val c = msg.content) {
                 is TdApi.MessageAudio -> c.audio.audio
@@ -94,9 +94,9 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     /** Makes sure [pos, pos+want) is on disk; returns how many bytes from pos are readable. */
     private fun ensureDownloaded(pos: Long, want: Int): Long {
         if (path != null && pos >= availStart && pos < availEnd) return availEnd - pos
-        val chunk = maxOf(want.toLong(), CHUNK)
+        val chunk = maxOf(want.toLong(), if (pos < 1_000_000L) CHUNK else BIG_CHUNK)
         val f = try {
-            TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true))
+            TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true), 180)
         } catch (e: Exception) {
             throw IOException("Telegram download failed: ${e.message}", e)
         }
@@ -154,6 +154,7 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     }
 
     companion object {
-        private const val CHUNK = 512L * 1024
+        private const val CHUNK = 512L * 1024 // small first chunk so a song starts fast
+        private const val BIG_CHUNK = 4L * 1024 * 1024 // then bigger reads for smooth playback
     }
 }

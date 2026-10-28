@@ -1,0 +1,394 @@
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/App.kt b3/app/src/main/kotlin/com/metrolist/music/App.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/App.kt	2026-10-27 11:05:09.260290698 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/App.kt	2026-10-27 11:05:18.496328316 +0000
+@@ -75,6 +75,7 @@
+ 
+         // Resume the saved Telegram session (no-op until the user has logged in once).
+         com.metrolist.music.telegram.TelegramClient.autoStart(this)
++        com.metrolist.music.telegram.MusicSource.init(this)
+ 
+         // Install crash handler first
+         CrashHandler.install(this)
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/MainActivity.kt b3/app/src/main/kotlin/com/metrolist/music/MainActivity.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/MainActivity.kt	2026-10-27 11:05:09.270652114 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/MainActivity.kt	2026-10-27 11:05:18.493928020 +0000
+@@ -1067,6 +1067,14 @@
+                                             )
+                                         },
+                                         actions = {
++                                            val musicSource = com.metrolist.music.telegram.rememberMusicSource()
++                                            androidx.compose.material3.TextButton(
++                                                onClick = { com.metrolist.music.telegram.MusicSource.toggle() },
++                                            ) {
++                                                Text(
++                                                    if (musicSource == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) "Telegram" else "YouTube",
++                                                )
++                                            }
+                                             if (showHistoryButton) {
+                                                 IconButton(onClick = { navController.navigate("history") }) {
+                                                     Icon(
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/telegram/MusicSource.kt b3/app/src/main/kotlin/com/metrolist/music/telegram/MusicSource.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/telegram/MusicSource.kt	1970-01-01 00:00:00.000000000 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/telegram/MusicSource.kt	2026-10-27 11:05:18.484369621 +0000
+@@ -0,0 +1,42 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import android.content.Context
++import android.content.SharedPreferences
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.collectAsState
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++
++enum class MusicSourceType { YOUTUBE, TELEGRAM }
++
++/** Which music source the app is using right now. Remembered between launches. */
++object MusicSource {
++    private var prefs: SharedPreferences? = null
++    private val _current = MutableStateFlow(MusicSourceType.YOUTUBE)
++    val current: StateFlow<MusicSourceType> = _current
++
++    @Synchronized
++    fun init(context: Context) {
++        if (prefs != null) return
++        val p = context.applicationContext.getSharedPreferences("tg_poc", Context.MODE_PRIVATE)
++        prefs = p
++        _current.value = p.getString("source", null)
++            ?.let { name -> runCatching { MusicSourceType.valueOf(name) }.getOrNull() }
++            ?: MusicSourceType.YOUTUBE
++    }
++
++    fun set(type: MusicSourceType) {
++        _current.value = type
++        prefs?.edit()?.putString("source", type.name)?.apply()
++    }
++
++    fun toggle() = set(if (_current.value == MusicSourceType.YOUTUBE) MusicSourceType.TELEGRAM else MusicSourceType.YOUTUBE)
++}
++
++@Composable
++fun rememberMusicSource(): MusicSourceType = MusicSource.current.collectAsState().value
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramHomeSearch.kt b3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramHomeSearch.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramHomeSearch.kt	1970-01-01 00:00:00.000000000 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramHomeSearch.kt	2026-10-27 11:05:18.486788568 +0000
+@@ -0,0 +1,175 @@
++/**
++ * Metrolist Telegram source (experimental)
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.PaddingValues
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.asPaddingValues
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.lazy.LazyColumn
++import androidx.compose.foundation.lazy.LazyRow
++import androidx.compose.foundation.lazy.items
++import androidx.compose.material3.Button
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.OutlinedButton
++import androidx.compose.material3.OutlinedTextField
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.saveable.rememberSaveable
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import com.metrolist.music.LocalPlayerAwareWindowInsets
++import com.metrolist.music.LocalPlayerConnection
++import com.metrolist.music.playback.queues.ListQueue
++
++@Composable
++private fun rememberPlay(): (List<TgTrack>, Int, String) -> Unit {
++    val pc = LocalPlayerConnection.current
++    return { list, index, title ->
++        if (list.isNotEmpty()) {
++            pc?.playQueue(ListQueue(title = title, items = list.map { it.toMediaItem() }, startIndex = index))
++        }
++    }
++}
++
++/** Home page used when the source is Telegram: recent songs, albums, shuffle. */
++@Composable
++fun TelegramHomeScreen() {
++    val context = LocalContext.current
++    LaunchedEffect(Unit) {
++        TelegramCatalog.init(context)
++        TelegramClient.autoStart(context)
++    }
++    val tracks by TelegramCatalog.tracks.collectAsState()
++    val play = rememberPlay()
++    val albums = remember(tracks) { buildAlbums(tracks).sortedByDescending { a -> a.tracks.maxOf { it.messageId } } }
++    val recent = remember(tracks) { tracks.sortedByDescending { it.messageId }.take(20) }
++
++    LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++        item {
++            Column(Modifier.padding(16.dp)) {
++                Text("Your Telegram music", style = MaterialTheme.typography.headlineSmall)
++                Text(
++                    "${tracks.size} songs \u2022 ${albums.size} albums",
++                    style = MaterialTheme.typography.bodyMedium,
++                    color = MaterialTheme.colorScheme.onSurfaceVariant,
++                )
++                Spacer(Modifier.height(12.dp))
++                if (tracks.isNotEmpty()) {
++                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
++                        Button(onClick = { play(tracks.shuffled(), 0, "Telegram") }) { Text("Shuffle all") }
++                        OutlinedButton(onClick = { play(recent, 0, "Recently added") }) { Text("Play recent") }
++                    }
++                }
++            }
++        }
++        if (tracks.isEmpty()) {
++            item {
++                Text(
++                    "Nothing here yet. Open the Library tab to connect Telegram and pick your music channel.",
++                    modifier = Modifier.padding(16.dp),
++                    style = MaterialTheme.typography.bodyLarge,
++                )
++            }
++        } else {
++            item { SectionTitle("Recently added") }
++            item {
++                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                    items(recent, key = { it.id }) { t ->
++                        Column(Modifier.width(140.dp).clickable { play(recent, recent.indexOf(t), "Recently added") }) {
++                            TgCover(t.coverPath, 140.dp)
++                            Spacer(Modifier.height(6.dp))
++                            Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
++                            Text(t.displayArtist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                        }
++                    }
++                }
++            }
++            if (albums.isNotEmpty()) {
++                item { SectionTitle("Albums") }
++                item {
++                    LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
++                        items(albums.take(30), key = { it.key }) { a ->
++                            Column(Modifier.width(140.dp).clickable { play(a.tracks, 0, a.title) }) {
++                                TgCover(a.coverPath, 140.dp)
++                                Spacer(Modifier.height(6.dp))
++                                Text(a.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
++                                Text(a.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
++
++@Composable
++private fun SectionTitle(text: String) {
++    Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 8.dp))
++}
++
++/** Search used when the source is Telegram: searches your catalog only. */
++@Composable
++fun TelegramSearchScreen() {
++    val context = LocalContext.current
++    LaunchedEffect(Unit) { TelegramCatalog.init(context) }
++    val tracks by TelegramCatalog.tracks.collectAsState()
++    var query by rememberSaveable { mutableStateOf("") }
++    val play = rememberPlay()
++    val q = query.trim().lowercase()
++    val results = remember(tracks, q) {
++        if (q.isEmpty()) emptyList()
++        else tracks.filter {
++            it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q)
++        }.sortedBy { it.title.lowercase() }
++    }
++
++    LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
++        item {
++            OutlinedTextField(
++                value = query,
++                onValueChange = { query = it },
++                placeholder = { Text("Search your Telegram music") },
++                singleLine = true,
++                modifier = Modifier.fillMaxWidth().padding(16.dp),
++            )
++        }
++        if (q.isNotEmpty() && results.isEmpty()) {
++            item { Text("No matches.", modifier = Modifier.padding(horizontal = 16.dp)) }
++        }
++        items(results, key = { it.id }) { t ->
++            Row(
++                Modifier.fillMaxWidth().clickable { play(results, results.indexOf(t), "Search") }.padding(horizontal = 16.dp, vertical = 8.dp),
++                verticalAlignment = Alignment.CenterVertically,
++            ) {
++                TgCover(t.coverPath, 48.dp)
++                Spacer(Modifier.width(12.dp))
++                Column(Modifier.weight(1f)) {
++                    Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
++                    Text("${t.displayArtist} \u2022 ${t.displayAlbum}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++                }
++                Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++            }
++        }
++    }
++}
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt b3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt	2026-10-27 11:05:09.255246762 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/telegram/TelegramLibraryScreen.kt	2026-10-27 11:05:18.481945076 +0000
+@@ -70,9 +70,9 @@
+ import org.drinkless.tdlib.TdApi
+ import java.io.File
+ 
+-private fun fmt(sec: Int): String = if (sec <= 0) "" else "%d:%02d".format(sec / 60, sec % 60)
++internal fun fmt(sec: Int): String = if (sec <= 0) "" else "%d:%02d".format(sec / 60, sec % 60)
+ 
+-private fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
++internal fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
+     tracks.filter { it.album.isNotBlank() }.groupBy { it.albumKey }.map { (key, list) ->
+         val sorted = list.sortedWith(compareBy({ it.discNo }, { it.trackNo }, { it.title.lowercase() }))
+         TgAlbum(
+@@ -85,7 +85,7 @@
+         )
+     }.sortedBy { it.title.lowercase() }
+ 
+-private fun artistOf(t: TgTrack): String = t.albumArtist.ifBlank { t.artist }.ifBlank { "Unknown artist" }
++internal fun artistOf(t: TgTrack): String = t.albumArtist.ifBlank { t.artist }.ifBlank { "Unknown artist" }
+ 
+ private fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
+     tracks.groupBy { artistOf(it) }.map { (name, list) ->
+@@ -203,7 +203,7 @@
+ }
+ 
+ @Composable
+-private fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
++internal fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+     val shape = RoundedCornerShape(8.dp)
+     if (path != null) {
+         AsyncImage(
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/ui/screens/NavigationBuilder.kt b3/app/src/main/kotlin/com/metrolist/music/ui/screens/NavigationBuilder.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/ui/screens/NavigationBuilder.kt	2026-10-27 11:05:09.266652113 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/ui/screens/NavigationBuilder.kt	2026-10-27 11:05:18.491580383 +0000
+@@ -74,7 +74,11 @@
+     snackbarHostState: SnackbarHostState,
+ ) {
+     composable(Screens.Home.route) {
+-        HomeScreen(snackbarHostState = snackbarHostState)
++        if (com.metrolist.music.telegram.rememberMusicSource() == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) {
++            com.metrolist.music.telegram.TelegramHomeScreen()
++        } else {
++            HomeScreen(snackbarHostState = snackbarHostState)
++        }
+     }
+ 
+     composable(Screens.Search.route) { backStackEntry ->
+@@ -89,14 +93,24 @@
+             remember(pureBlackEnabled, useDarkTheme) {
+                 pureBlackEnabled && useDarkTheme
+             }
+-        SearchScreen(
+-            pureBlack = pureBlack,
+-            savedStateHandle = backStackEntry.savedStateHandle
+-        )
++        if (com.metrolist.music.telegram.rememberMusicSource() == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) {
++            com.metrolist.music.telegram.TelegramSearchScreen()
++        } else {
++            SearchScreen(
++                pureBlack = pureBlack,
++                savedStateHandle = backStackEntry.savedStateHandle
++            )
++        }
+     }
+ 
+     composable(Screens.Library.route) {
+-        LibraryScreen()
++        if (com.metrolist.music.telegram.rememberMusicSource() == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) {
++            com.metrolist.music.telegram.TelegramLibraryScreen(
++                onBack = { com.metrolist.music.telegram.MusicSource.set(com.metrolist.music.telegram.MusicSourceType.YOUTUBE) },
++            )
++        } else {
++            LibraryScreen()
++        }
+     }
+ 
+     composable(Screens.ListenTogether.route) {
+diff -urN a3/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt b3/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt
+--- a3/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt	2026-10-27 11:05:09.257717355 +0000
++++ b3/app/src/main/kotlin/com/metrolist/music/ui/screens/library/LibraryScreen.kt	2026-10-27 11:05:18.489172149 +0000
+@@ -7,20 +7,10 @@
+ 
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Row
+-import androidx.compose.foundation.layout.Spacer
+ import androidx.compose.foundation.layout.fillMaxSize
+-import androidx.compose.foundation.layout.width
+-import androidx.compose.foundation.shape.RoundedCornerShape
+-import androidx.compose.material3.ExperimentalMaterial3Api
+-import androidx.compose.material3.FilterChip
+-import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.getValue
+-import androidx.compose.runtime.mutableStateOf
+-import androidx.compose.runtime.saveable.rememberSaveable
+ import androidx.compose.runtime.setValue
+-import androidx.compose.ui.unit.dp
+-import com.metrolist.music.telegram.TelegramLibraryScreen
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.res.stringResource
+ import com.metrolist.music.LocalNavController
+@@ -33,7 +23,6 @@
+ import com.metrolist.music.ui.component.ChipsRow
+ import com.metrolist.music.utils.rememberEnumPreference
+ 
+-@OptIn(ExperimentalMaterial3Api::class)
+ @Composable
+ fun LibraryScreen() {
+     val navController = LocalNavController.current
+@@ -41,17 +30,8 @@
+     var libraryViewType by rememberEnumPreference(AlbumViewTypeKey, LibraryViewType.GRID)
+     var playlistViewType by rememberEnumPreference(PlaylistViewTypeKey, LibraryViewType.GRID)
+ 
+-    var showTelegram by rememberSaveable { mutableStateOf(true) }
+-
+     val filterContent = @Composable {
+         Row {
+-            Spacer(Modifier.width(12.dp))
+-            FilterChip(
+-                selected = false,
+-                onClick = { showTelegram = true },
+-                label = { Text("Telegram") },
+-                shape = RoundedCornerShape(16.dp),
+-            )
+             ChipsRow(
+                 chips = listOf(
+                     LibraryFilter.PLAYLISTS to stringResource(R.string.filter_playlists),
+@@ -70,10 +50,6 @@
+     }
+ 
+     Box(modifier = Modifier.fillMaxSize()) {
+-        if (showTelegram) {
+-            TelegramLibraryScreen(onBack = { showTelegram = false })
+-            return@Box
+-        }
+         when (filterType) {
+             LibraryFilter.LIBRARY -> LibraryMixScreen(
+                 navController = navController,

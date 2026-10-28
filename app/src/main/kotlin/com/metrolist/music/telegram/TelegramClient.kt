@@ -126,10 +126,11 @@ object TelegramClient {
         client?.send(TdApi.DeleteFile(fileId), null)
     }
 
-    /** Delete downloaded chunks so Telegram streaming doesn't eat phone storage. */
+    const val CACHE_LIMIT_BYTES = 1_000_000_000L // streaming/prefetch cache cap (~1 GB)
+
+    /** Keep Telegram's streaming cache under the cap; offline downloads live elsewhere and are untouched. */
     fun trimCache() {
-        // size=0, ttl=0, count=0 -> delete everything older than the 300s immunity window
-        // (so the track currently playing survives).
-        client?.send(TdApi.OptimizeStorage(0L, 0, 0, 300, null, null, null, false, 0), null)
+        // size cap, default age/count limits, files younger than 10 minutes are never deleted
+        client?.send(TdApi.OptimizeStorage(CACHE_LIMIT_BYTES, -1, -1, 600, null, null, null, false, 0), null)
     }
 }

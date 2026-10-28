@@ -74,7 +74,11 @@ fun NavGraphBuilder.navigationBuilder(
     snackbarHostState: SnackbarHostState,
 ) {
     composable(Screens.Home.route) {
-        HomeScreen(snackbarHostState = snackbarHostState)
+        if (com.metrolist.music.telegram.rememberMusicSource() == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) {
+            com.metrolist.music.telegram.TelegramHomeScreen()
+        } else {
+            HomeScreen(snackbarHostState = snackbarHostState)
+        }
     }
 
     composable(Screens.Search.route) { backStackEntry ->
@@ -89,14 +93,24 @@ fun NavGraphBuilder.navigationBuilder(
             remember(pureBlackEnabled, useDarkTheme) {
                 pureBlackEnabled && useDarkTheme
             }
-        SearchScreen(
-            pureBlack = pureBlack,
-            savedStateHandle = backStackEntry.savedStateHandle
-        )
+        if (com.metrolist.music.telegram.rememberMusicSource() == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) {
+            com.metrolist.music.telegram.TelegramSearchScreen()
+        } else {
+            SearchScreen(
+                pureBlack = pureBlack,
+                savedStateHandle = backStackEntry.savedStateHandle
+            )
+        }
     }
 
     composable(Screens.Library.route) {
-        LibraryScreen()
+        if (com.metrolist.music.telegram.rememberMusicSource() == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) {
+            com.metrolist.music.telegram.TelegramLibraryScreen(
+                onBack = { com.metrolist.music.telegram.MusicSource.set(com.metrolist.music.telegram.MusicSourceType.YOUTUBE) },
+            )
+        } else {
+            LibraryScreen()
+        }
     }
 
     composable(Screens.ListenTogether.route) {

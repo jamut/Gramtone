@@ -1067,6 +1067,14 @@ class MainActivity : FragmentActivity() {
                                             )
                                         },
                                         actions = {
+                                            val musicSource = com.metrolist.music.telegram.rememberMusicSource()
+                                            androidx.compose.material3.TextButton(
+                                                onClick = { com.metrolist.music.telegram.MusicSource.toggle() },
+                                            ) {
+                                                Text(
+                                                    if (musicSource == com.metrolist.music.telegram.MusicSourceType.TELEGRAM) "Telegram" else "YouTube",
+                                                )
+                                            }
                                             if (showHistoryButton) {
                                                 IconButton(onClick = { navController.navigate("history") }) {
                                                     Icon(

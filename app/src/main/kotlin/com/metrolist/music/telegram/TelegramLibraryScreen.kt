@@ -3,7 +3,7 @@
  * Licensed under GPL-3.0
  */
 
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, androidx.media3.common.util.UnstableApi::class)
 
 package com.metrolist.music.telegram
 
@@ -32,7 +32,10 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -60,7 +63,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import androidx.media3.exoplayer.offline.Download
+import androidx.media3.exoplayer.offline.DownloadService
+import com.metrolist.music.LocalDownloadUtil
 import com.metrolist.music.LocalPlayerAwareWindowInsets
+import com.metrolist.music.playback.ExoDownloadService
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.playback.queues.ListQueue
@@ -70,9 +77,9 @@ import kotlinx.coroutines.withContext
 import org.drinkless.tdlib.TdApi
 import java.io.File
 
-private fun fmt(sec: Int): String = if (sec <= 0) "" else "%d:%02d".format(sec / 60, sec % 60)
+internal fun fmt(sec: Int): String = if (sec <= 0) "" else "%d:%02d".format(sec / 60, sec % 60)
 
-private fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
+internal fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
     tracks.filter { it.album.isNotBlank() }.groupBy { it.albumKey }.map { (key, list) ->
         val sorted = list.sortedWith(compareBy({ it.discNo }, { it.trackNo }, { it.title.lowercase() }))
         TgAlbum(
@@ -85,7 +92,7 @@ private fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
         )
     }.sortedBy { it.title.lowercase() }
 
-private fun artistOf(t: TgTrack): String = t.albumArtist.ifBlank { t.artist }.ifBlank { "Unknown artist" }
+internal fun artistOf(t: TgTrack): String = t.albumArtist.ifBlank { t.artist }.ifBlank { "Unknown artist" }
 
 private fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
     tracks.groupBy { artistOf(it) }.map { (name, list) ->
@@ -203,7 +210,7 @@ private fun TgChannelPicker(onBack: () -> Unit, onPicked: (Long, String) -> Unit
 }
 
 @Composable
-private fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+internal fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
     if (path != null) {
         AsyncImage(
@@ -222,7 +229,15 @@ private fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier: 
 @Composable
 private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> Unit) {
     val context = LocalContext.current
-    val tracks by TelegramCatalog.tracks.collectAsState()
+    val allTracks by TelegramCatalog.tracks.collectAsState()
+    val downloadUtil = LocalDownloadUtil.current
+    val downloads by downloadUtil.downloads.collectAsState()
+    val offlineIds = remember(downloads) { downloads.filterValues { it.state == Download.STATE_COMPLETED }.keys }
+    val usedBytes = remember(downloads) { downloadUtil.downloadCache.cacheSpace }
+    var onlyDownloaded by rememberSaveable { mutableStateOf(false) }
+    val tracks = remember(allTracks, offlineIds, onlyDownloaded) {
+        if (onlyDownloaded) allTracks.filter { it.id in offlineIds } else allTracks
+    }
     val sync by TelegramSync.state.collectAsState()
     val playerConnection = LocalPlayerConnection.current
     var tab by rememberSaveable { mutableStateOf(0) } // 0 songs, 1 albums, 2 artists
@@ -252,6 +267,9 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
             onClearArtist = { artistFilter = null },
             sync = sync,
             songCount = tracks.size,
+            onlyDownloaded = onlyDownloaded,
+            onToggleDownloaded = { onlyDownloaded = !onlyDownloaded },
+            usedBytes = usedBytes,
             onBack = onBack,
             onSync = { TelegramSync.start(context, chatId) },
             onChangeChannel = onChangeChannel,
@@ -283,6 +301,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                             Text("${t.displayArtist} • ${t.displayAlbum}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TgDownloadButton(t)
                     }
                 }
             }
@@ -342,6 +361,9 @@ private fun TgHeader(
     onClearArtist: () -> Unit,
     sync: TelegramSync.State,
     songCount: Int,
+    onlyDownloaded: Boolean,
+    onToggleDownloaded: () -> Unit,
+    usedBytes: Long,
     onBack: () -> Unit,
     onSync: () -> Unit,
     onChangeChannel: () -> Unit,
@@ -358,6 +380,7 @@ private fun TgHeader(
             listOf("Songs", "Albums", "Artists").forEachIndexed { i, label ->
                 FilterChip(selected = tab == i, onClick = { onTab(i) }, label = { Text(label) }, shape = RoundedCornerShape(16.dp))
             }
+            FilterChip(selected = onlyDownloaded, onClick = onToggleDownloaded, label = { Text("Downloaded") }, shape = RoundedCornerShape(16.dp))
             if (artistFilter != null) {
                 FilterChip(
                     selected = true,
@@ -391,7 +414,7 @@ private fun TgHeader(
             }
             TelegramSync.State.Idle -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("$songCount songs", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    Text(if (usedBytes > 0) "$songCount songs \u2022 ${fmtBytes(usedBytes)} downloaded" else "$songCount songs", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                     TextButton(onClick = onSync) { Text("Sync") }
                     TextButton(onClick = onChangeChannel) { Text("Change channel") }
                 }
@@ -428,8 +451,16 @@ private fun TgAlbumDetail(album: TgAlbum, onClose: () -> Unit, onPlay: (Int) -> 
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val context = LocalContext.current
+                    val downloadUtil = LocalDownloadUtil.current
+                    val downloads by downloadUtil.downloads.collectAsState()
+                    val allOffline = album.tracks.all { downloads[it.id]?.state == Download.STATE_COMPLETED }
                     Button(onClick = { onPlay(0) }) { Text("Play") }
                     OutlinedButton(onClick = onShuffle) { Text("Shuffle") }
+                    OutlinedButton(onClick = {
+                        if (allOffline) album.tracks.forEach { removeTgDownload(context, it.id) }
+                        else album.tracks.forEach { downloadUtil.download(it.toMediaMetadata()) }
+                    }) { Text(if (allOffline) "Remove" else "Download") }
                 }
             }
         }
@@ -445,7 +476,54 @@ private fun TgAlbumDetail(album: TgAlbum, onClose: () -> Unit, onPlay: (Int) -> 
                     Text(t.displayArtist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TgDownloadButton(t)
             }
+        }
+    }
+}
+
+internal fun fmtBytes(b: Long): String =
+    if (b >= 1_000_000_000L) "%.1f GB".format(b / 1_000_000_000.0) else "%d MB".format(b / 1_000_000L)
+
+private fun removeTgDownload(context: android.content.Context, id: String) {
+    DownloadService.sendRemoveDownload(context, ExoDownloadService::class.java, id, false)
+}
+
+/** Download icon using Metrolist's own downloader: tap to download, ring while downloading, check when saved. */
+@Composable
+internal fun TgDownloadButton(t: TgTrack) {
+    val context = LocalContext.current
+    val downloadUtil = LocalDownloadUtil.current
+    val downloads by downloadUtil.downloads.collectAsState()
+    var confirmRemove by remember { mutableStateOf(false) }
+    val d = downloads[t.id]
+    when (d?.state) {
+        Download.STATE_COMPLETED -> {
+            IconButton(onClick = { confirmRemove = true }) {
+                Icon(painterResource(R.drawable.done), contentDescription = "Downloaded", tint = MaterialTheme.colorScheme.primary)
+            }
+            if (confirmRemove) {
+                AlertDialog(
+                    onDismissRequest = { confirmRemove = false },
+                    title = { Text("Remove download?") },
+                    text = { Text(t.title) },
+                    confirmButton = { TextButton(onClick = { confirmRemove = false; removeTgDownload(context, t.id) }) { Text("Remove") } },
+                    dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
+                )
+            }
+        }
+        Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_RESTARTING -> {
+            IconButton(onClick = { removeTgDownload(context, t.id) }) {
+                val pct = d.percentDownloaded
+                if (pct < 0f) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    CircularProgressIndicator(progress = { pct / 100f }, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                }
+            }
+        }
+        else -> IconButton(onClick = { downloadUtil.download(t.toMediaMetadata()) }) {
+            Icon(painterResource(R.drawable.download), contentDescription = "Download")
         }
     }
 }

@@ -1373,7 +1373,9 @@ class MusicService :
                 val account = Triple(YouTube.cookie, YouTube.dataSyncId, YouTube.authUser)
                 val nonce = com.metrolist.innertubex.extraction.generateClientPlaybackNonce()
                 suspend {
-                    withContext(Dispatchers.IO) {
+                    if (com.metrolist.music.telegram.TelegramUri.isTelegramId(videoId)) {
+                        false // Telegram songs are not YouTube videos: never report them to YouTube history
+                    } else withContext(Dispatchers.IO) {
                         YouTube.registerPlayback(videoId, nonce) {
                             !dataStore.get(PauseListenHistoryKey, false) &&
                                 account == Triple(YouTube.cookie, YouTube.dataSyncId, YouTube.authUser)
@@ -2532,6 +2534,7 @@ class MusicService :
         mediaItem: MediaItem?,
         reason: Int,
     ) {
+        com.metrolist.music.telegram.TelegramPrefetcher.onTransition(player) { id -> downloadCache.isCached(id, 0, 1) }
         // Only natural completion transitions mark the previous track as fully cached,
         // never a manual skip or seek. Read lastTransitionedMediaId before replacing it.
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
