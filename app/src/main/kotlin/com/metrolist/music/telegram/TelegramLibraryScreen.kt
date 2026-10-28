@@ -126,6 +126,7 @@ fun TelegramLibraryScreen(onBack: () -> Unit) {
             chatId = chatId,
             onBack = onBack,
             onChangeChannel = {
+                TelegramSync.stop()
                 prefs.edit().remove("chat_id").apply()
                 chatId = 0L
             },
@@ -273,6 +274,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
             onBack = onBack,
             onSync = { TelegramSync.start(context, chatId) },
             onChangeChannel = onChangeChannel,
+            onStop = { TelegramSync.stop() },
         )
     }
 
@@ -367,6 +369,7 @@ private fun TgHeader(
     onBack: () -> Unit,
     onSync: () -> Unit,
     onChangeChannel: () -> Unit,
+    onStop: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -400,17 +403,21 @@ private fun TgHeader(
             modifier = Modifier.fillMaxWidth(),
         )
         when (sync) {
-            is TelegramSync.State.Scanning -> {
-                Text("Scanning channel... ${sync.found} found", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
-            }
-            is TelegramSync.State.Indexing -> {
-                Text("Reading tags and covers ${sync.done}/${sync.total}", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                LinearProgressIndicator(progress = { if (sync.total == 0) 0f else sync.done / sync.total.toFloat() }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp))
-            }
+            is TelegramSync.State.Scanning ->
+                TgSyncRow("Scanning channel... ${sync.found} found", null, onStop, onChangeChannel)
+            is TelegramSync.State.Indexing ->
+                TgSyncRow(
+                    "Reading tags and covers ${sync.done}/${sync.total}",
+                    if (sync.total == 0) 0f else sync.done / sync.total.toFloat(),
+                    onStop,
+                    onChangeChannel,
+                )
             is TelegramSync.State.Failed -> {
                 Text("Sync failed: ${sync.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-                TextButton(onClick = onSync) { Text("Retry") }
+                Row {
+                    TextButton(onClick = onSync) { Text("Retry") }
+                    TextButton(onClick = onChangeChannel) { Text("Change channel") }
+                }
             }
             TelegramSync.State.Idle -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -419,6 +426,23 @@ private fun TgHeader(
                     TextButton(onClick = onChangeChannel) { Text("Change channel") }
                 }
             }
+        }
+    }
+}
+
+/** Scanning/indexing status with a Stop button; Change channel stays available the whole time. */
+@Composable
+private fun TgSyncRow(text: String, progress: Float?, onStop: () -> Unit, onChangeChannel: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = onStop) { Text("Stop") }
+            TextButton(onClick = onChangeChannel) { Text("Change channel") }
+        }
+        if (progress == null) {
+            LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom = 4.dp))
+        } else {
+            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp))
         }
     }
 }

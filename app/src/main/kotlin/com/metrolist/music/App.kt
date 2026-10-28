@@ -75,7 +75,6 @@ class App :
 
         // Resume the saved Telegram session (no-op until the user has logged in once).
         com.metrolist.music.telegram.TelegramClient.autoStart(this)
-        com.metrolist.music.telegram.MusicSource.init(this)
 
         // Install crash handler first
         CrashHandler.install(this)

@@ -1199,6 +1199,10 @@ fun HomeScreen(
                     )
                 }
 
+                item(key = "telegram_home") {
+                    com.metrolist.music.telegram.TelegramHomeSection()
+                }
+
                 if (isLoading && homePage?.chips.isNullOrEmpty()) {
                     item(key = "chips_shimmer") {
                         ShimmerHost(showGradient = false) {

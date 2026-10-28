@@ -6,12 +6,16 @@
 package com.metrolist.music.telegram
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.SupervisorJob
@@ -70,6 +74,8 @@ object TelegramSync {
                 enrich(app)
                 TelegramCatalog.refresh()
                 _state.value = State.Idle
+            } catch (e: CancellationException) {
+                throw e // user pressed Stop
             } catch (e: Exception) {
                 TelegramCatalog.refresh()
                 _state.value = State.Failed(e.message ?: "Sync failed")
@@ -77,12 +83,21 @@ object TelegramSync {
         }
     }
 
-    private fun scan(chatId: Long) {
+    /** Stops scanning/indexing. Everything found so far stays in the catalog. */
+    fun stop() {
+        job?.cancel()
+        job = null
+        _state.value = State.Idle
+        TelegramCatalog.refresh()
+    }
+
+    private suspend fun scan(chatId: Long) {
         val known = TelegramCatalog.knownIds()
         var from = 0L
         var found = 0
         var emptyPages = 0
         while (true) {
+            currentCoroutineContext().ensureActive()
             val msgs = TelegramClient.call(TdApi.GetChatHistory(chatId, from, 0, 100, false)).messages
             if (msgs.isEmpty()) {
                 if (++emptyPages >= 2) break else continue
@@ -152,7 +167,7 @@ object TelegramSync {
             async {
                 gate.withPermit { enrichOne(t, coverDir) }
                 val d = done.incrementAndGet()
-                _state.value = State.Indexing(d, todo.size)
+                if (isActive) _state.value = State.Indexing(d, todo.size)
                 if (d % 25 == 0) TelegramCatalog.refresh()
             }
         }.awaitAll()
