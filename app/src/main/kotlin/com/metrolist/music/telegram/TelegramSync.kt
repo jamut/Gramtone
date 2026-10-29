@@ -161,7 +161,7 @@ object TelegramSync {
         val todo = TelegramCatalog.unindexed()
         val coverDir = TelegramCatalog.coverDir(context)
         val done = AtomicInteger(0)
-        val gate = Semaphore(4)
+        val gate = Semaphore(3)
         _state.value = State.Indexing(0, todo.size)
         todo.map { t ->
             async {

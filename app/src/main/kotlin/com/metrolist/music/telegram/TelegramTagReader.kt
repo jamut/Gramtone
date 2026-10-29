@@ -27,7 +27,7 @@ class TelegramFileReader(private val fileId: Int, val fileSize: Long) : MediaDat
         if (position >= fileSize) return -1
         val want = minOf(size.toLong(), fileSize - position).toInt()
         if (!(path != null && position >= availStart && position < availEnd)) {
-            val f = TelegramClient.call(TdApi.DownloadFile(fileId, 16, position, maxOf(want.toLong(), CHUNK), true), 120)
+            val f = TelegramClient.call(TdApi.DownloadFile(fileId, 1, position, maxOf(want.toLong(), CHUNK), true), 120) // priority 1: never slow down playback
             val local = f.local
             if (path != local.path) {
                 raf?.close()
@@ -88,11 +88,90 @@ object TelegramTagReader {
      */
     fun read(reader: TelegramFileReader): ReadTags? {
         return try {
-            readId3v2(reader) ?: readFlac(reader) ?: readId3v1(reader)
-                ?: if (reader.fileSize <= RETRIEVER_MAX_BYTES) readWithRetriever(reader) else null
+            val head = reader.readFully(0, minOf(12L, reader.fileSize).toInt()) ?: return null
+            fun text(from: Int, len: Int) =
+                if (head.size >= from + len) String(head, from, len, Charsets.ISO_8859_1) else ""
+            when {
+                text(0, 4) == "fLaC" -> readFlac(reader)
+                text(0, 3) == "ID3" -> {
+                    val footer = if ((u(head, 5) and 0x10) != 0) 10 else 0
+                    val audioStart = 10L + syncsafe(head, 6) + footer
+                    withMp3Duration(reader, readId3v2(reader) ?: readId3v1(reader), audioStart)
+                }
+                head.size >= 2 && u(head, 0) == 0xFF && (u(head, 1) and 0xE0) == 0xE0 ->
+                    withMp3Duration(reader, readId3v1(reader), 0L)
+                // m4a / ogg: Android's reader, only for small files (it can read a lot of the file)
+                text(4, 4) == "ftyp" || text(0, 4) == "OggS" ->
+                    if (reader.fileSize <= RETRIEVER_MAX_BYTES) readWithRetriever(reader) else null
+                else -> null // unknown format: keep the file-name info
+            }
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun withMp3Duration(r: TelegramFileReader, tags: ReadTags?, audioStart: Long): ReadTags? {
+        val d = estimateMp3Seconds(r, audioStart)
+        if (tags == null) return if (d > 0) ReadTags(null, null, null, null, 0, 0, 0, d, null) else null
+        return if (tags.durationSec > 0 || d <= 0) tags else tags.copy(durationSec = d)
+    }
+
+    private val BR_V1_L1 = intArrayOf(0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448)
+    private val BR_V1_L2 = intArrayOf(0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384)
+    private val BR_V1_L3 = intArrayOf(0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)
+    private val BR_V2_L1 = intArrayOf(0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256)
+    private val BR_V2_L23 = intArrayOf(0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
+
+    /** MP3 length from its first frame (exact with a Xing/Info header, otherwise assumes constant bitrate). */
+    private fun estimateMp3Seconds(r: TelegramFileReader, audioStart: Long): Int {
+        if (audioStart < 0 || audioStart >= r.fileSize) return 0
+        val len = minOf(8192L, r.fileSize - audioStart).toInt()
+        if (len < 4) return 0
+        val b = r.readFully(audioStart, len) ?: return 0
+        var i = 0
+        while (i + 4 <= b.size) {
+            if (u(b, i) == 0xFF && (u(b, i + 1) and 0xE0) == 0xE0) {
+                val vBits = (u(b, i + 1) shr 3) and 3 // 0 = MPEG 2.5, 2 = MPEG 2, 3 = MPEG 1
+                val lBits = (u(b, i + 1) shr 1) and 3 // 1 = layer 3, 2 = layer 2, 3 = layer 1
+                val brIdx = (u(b, i + 2) shr 4) and 0xF
+                val srIdx = (u(b, i + 2) shr 2) and 3
+                val mono = ((u(b, i + 3) shr 6) and 3) == 3
+                if (vBits != 1 && lBits != 0 && brIdx in 1..14 && srIdx != 3) {
+                    val v1 = vBits == 3
+                    val layer = 4 - lBits
+                    val kbps = when {
+                        v1 && layer == 1 -> BR_V1_L1[brIdx]
+                        v1 && layer == 2 -> BR_V1_L2[brIdx]
+                        v1 -> BR_V1_L3[brIdx]
+                        layer == 1 -> BR_V2_L1[brIdx]
+                        else -> BR_V2_L23[brIdx]
+                    }
+                    val sr = when (vBits) {
+                        3 -> intArrayOf(44100, 48000, 32000)[srIdx]
+                        2 -> intArrayOf(22050, 24000, 16000)[srIdx]
+                        else -> intArrayOf(11025, 12000, 8000)[srIdx]
+                    }
+                    val spf = when {
+                        layer == 1 -> 384
+                        layer == 2 -> 1152
+                        v1 -> 1152
+                        else -> 576
+                    }
+                    val side = if (v1) (if (mono) 17 else 32) else (if (mono) 9 else 17)
+                    val x = i + 4 + side
+                    if (x + 12 <= b.size) {
+                        val tag = String(b, x, 4, Charsets.ISO_8859_1)
+                        if ((tag == "Xing" || tag == "Info") && (be32(b, x + 4) and 1L) != 0L) {
+                            val frames = be32(b, x + 8)
+                            if (frames > 0) return (frames * spf / sr).toInt()
+                        }
+                    }
+                    if (kbps > 0) return ((r.fileSize - audioStart - i) * 8 / (kbps * 1000L)).toInt()
+                }
+            }
+            i++
+        }
+        return 0
     }
 
     // ---------- helpers ----------

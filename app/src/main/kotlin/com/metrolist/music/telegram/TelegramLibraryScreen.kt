@@ -31,9 +31,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -245,9 +247,43 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
     var openAlbum by rememberSaveable { mutableStateOf<String?>(null) }
     var artistFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
+    var selectMode by rememberSaveable { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    var showEdit by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(chatId) { TelegramSync.start(context, chatId) }
     BackHandler(enabled = openAlbum != null) { openAlbum = null }
+
+    if (showEdit) {
+        TgEditDialog(
+            count = selected.size,
+            single = tracks.firstOrNull { it.id in selected }.takeIf { selected.size == 1 },
+            onDismiss = { showEdit = false },
+            onSave = { title, artist, album, year, trackNo ->
+                val ids = selected
+                showEdit = false
+                selected = emptySet()
+                selectMode = false
+                scope.launch(Dispatchers.IO) {
+                    TelegramCatalog.tracks.value.filter { it.id in ids }.forEach { t ->
+                        TelegramCatalog.update(
+                            t.copy(
+                                title = if (title.isNotBlank()) title else t.title,
+                                artist = if (artist.isNotBlank()) artist else t.artist,
+                                albumArtist = if (artist.isNotBlank()) artist else t.albumArtist,
+                                album = if (album.isNotBlank()) album else t.album,
+                                year = year ?: t.year,
+                                trackNo = trackNo ?: t.trackNo,
+                                indexed = true,
+                            ),
+                        )
+                    }
+                    TelegramCatalog.refresh()
+                }
+            },
+        )
+    }
 
     val albums = remember(tracks) { buildAlbums(tracks) }
     val artists = remember(tracks) { buildArtists(tracks) }
@@ -271,6 +307,11 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
             onlyDownloaded = onlyDownloaded,
             onToggleDownloaded = { onlyDownloaded = !onlyDownloaded },
             usedBytes = usedBytes,
+            selectMode = selectMode,
+            selectedCount = selected.size,
+            onToggleSelect = { selectMode = !selectMode; if (!selectMode) selected = emptySet() },
+            onEditSelected = { if (selected.isNotEmpty()) showEdit = true },
+            onSelectAll = { selected = tracks.map { it.id }.toSet() },
             onBack = onBack,
             onSync = { TelegramSync.start(context, chatId) },
             onChangeChannel = onChangeChannel,
@@ -293,9 +334,16 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                 item { header() }
                 items(list, key = { it.id }) { t ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { play(list, list.indexOf(t), "Telegram") }.padding(horizontal = 16.dp, vertical = 8.dp),
+                        Modifier.fillMaxWidth().clickable {
+                            if (selectMode) selected = if (t.id in selected) selected - t.id else selected + t.id
+                            else play(list, list.indexOf(t), "Telegram")
+                        }.padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        if (selectMode) {
+                            Checkbox(checked = t.id in selected, onCheckedChange = null)
+                            Spacer(Modifier.width(8.dp))
+                        }
                         TgCover(t.coverPath, 48.dp)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -366,6 +414,11 @@ private fun TgHeader(
     onlyDownloaded: Boolean,
     onToggleDownloaded: () -> Unit,
     usedBytes: Long,
+    selectMode: Boolean,
+    selectedCount: Int,
+    onToggleSelect: () -> Unit,
+    onEditSelected: () -> Unit,
+    onSelectAll: () -> Unit,
     onBack: () -> Unit,
     onSync: () -> Unit,
     onChangeChannel: () -> Unit,
@@ -384,6 +437,11 @@ private fun TgHeader(
                 FilterChip(selected = tab == i, onClick = { onTab(i) }, label = { Text(label) }, shape = RoundedCornerShape(16.dp))
             }
             FilterChip(selected = onlyDownloaded, onClick = onToggleDownloaded, label = { Text("Downloaded") }, shape = RoundedCornerShape(16.dp))
+            FilterChip(selected = selectMode, onClick = onToggleSelect, label = { Text(if (selectMode) "Done" else "Select") }, shape = RoundedCornerShape(16.dp))
+            if (selectMode) {
+                FilterChip(selected = false, onClick = onSelectAll, label = { Text("All") }, shape = RoundedCornerShape(16.dp))
+                FilterChip(selected = selectedCount > 0, onClick = onEditSelected, label = { Text("Edit ($selectedCount)") }, shape = RoundedCornerShape(16.dp))
+            }
             if (artistFilter != null) {
                 FilterChip(
                     selected = true,
@@ -550,4 +608,39 @@ internal fun TgDownloadButton(t: TgTrack) {
             Icon(painterResource(R.drawable.download), contentDescription = "Download")
         }
     }
+}
+
+@Composable
+private fun TgEditDialog(
+    count: Int,
+    single: TgTrack?,
+    onDismiss: () -> Unit,
+    onSave: (title: String, artist: String, album: String, year: Int?, trackNo: Int?) -> Unit,
+) {
+    var title by remember { mutableStateOf(single?.title ?: "") }
+    var artist by remember { mutableStateOf(single?.artist ?: "") }
+    var album by remember { mutableStateOf(single?.album ?: "") }
+    var year by remember { mutableStateOf(single?.year?.takeIf { it > 0 }?.toString() ?: "") }
+    var trackNo by remember { mutableStateOf(single?.trackNo?.takeIf { it > 0 }?.toString() ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (count == 1) "Edit song" else "Edit $count songs") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (count != 1) {
+                    Text("Fill only what you want to change. Empty fields stay as they are.", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    OutlinedTextField(title, { title = it }, label = { Text("Title") }, singleLine = true)
+                    OutlinedTextField(trackNo, { trackNo = it }, label = { Text("Track number") }, singleLine = true)
+                }
+                OutlinedTextField(artist, { artist = it }, label = { Text("Artist") }, singleLine = true)
+                OutlinedTextField(album, { album = it }, label = { Text("Album") }, singleLine = true)
+                OutlinedTextField(year, { year = it }, label = { Text("Year") }, singleLine = true)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(title.trim(), artist.trim(), album.trim(), year.trim().toIntOrNull(), trackNo.trim().toIntOrNull()) }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
