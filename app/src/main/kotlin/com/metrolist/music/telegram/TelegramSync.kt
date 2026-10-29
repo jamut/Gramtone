@@ -215,6 +215,7 @@ object TelegramSync {
             // keep the basic info from Telegram; don't retry forever
         }
         TelegramCatalog.update(updated)
-        if (fileId != 0) TelegramClient.deleteLocalFile(fileId) // don't let tag-reading fill the phone
+        // don't let tag-reading fill the phone, but never delete a file that is playing right now
+        if (fileId != 0 && fileId !in TelegramActiveFiles.ids) TelegramClient.deleteLocalFile(fileId)
     }
 }

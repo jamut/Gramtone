@@ -62,9 +62,12 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
                 else -> throw IOException("Message is not an audio file")
             }
             fileId = file.id
-            fileSize = file.size
+            // size can be 0 on some files; expectedSize is Telegram's own figure
+            fileSize = maxOf(file.size, file.expectedSize)
+            if (fileSize <= 0L) throw IOException("Telegram did not report a file size")
+            TelegramActiveFiles.ids.add(fileId)
         } catch (e: Exception) {
-            throw IOException("Telegram resolve failed: ${e.message}", e)
+            throw IOException("Telegram resolve failed (${e.javaClass.simpleName}): ${e.message}", e)
         }
         position = dataSpec.position
         bytesRemaining =
@@ -98,14 +101,14 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         val f = try {
             TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true), 180)
         } catch (e: Exception) {
-            throw IOException("Telegram download failed: ${e.message}", e)
+            throw IOException("Telegram download failed at byte $pos (${e.javaClass.simpleName}): ${e.message}", e)
         }
         val local = f.local
-        if (path != local.path) {
-            raf?.close()
-            raf = RandomAccessFile(local.path, "r")
-            path = local.path
-        }
+        if (local.path.isNullOrEmpty()) throw IOException("Telegram gave no local file path at byte $pos")
+        // always reopen: TDLib can replace or move the file between requests, and a stale handle reads garbage
+        raf?.close()
+        raf = RandomAccessFile(local.path, "r")
+        path = local.path
         // downloadedPrefixSize counts from downloadOffset
         val readable = local.downloadOffset + local.downloadedPrefixSize - pos
         if (readable <= 0) throw IOException("Telegram returned no data at $pos")
@@ -118,6 +121,7 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
 
     override fun close() {
         raf?.close(); raf = null; path = null
+        if (fileId != 0) TelegramActiveFiles.ids.remove(fileId)
         currentUri = null
         availStart = 0; availEnd = 0
         if (opened) { opened = false; transferEnded() }

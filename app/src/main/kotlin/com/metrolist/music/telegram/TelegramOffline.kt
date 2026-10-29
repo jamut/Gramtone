@@ -21,6 +21,11 @@ internal fun telegramFileOf(msg: TdApi.Message): TdApi.File? =
         else -> null
     }
 
+/** File ids that are playing right now, so background cleanup never deletes them mid-song. */
+object TelegramActiveFiles {
+    val ids: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+}
+
 /** Keeps the next songs of the queue on the phone so playback never waits on the network. */
 object TelegramPrefetcher {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
