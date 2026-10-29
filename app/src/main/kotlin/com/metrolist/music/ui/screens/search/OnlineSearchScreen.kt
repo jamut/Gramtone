@@ -375,6 +375,10 @@ fun OnlineSearchScreen(
             }
         }
 
+        item(key = "telegram_results") {
+            com.metrolist.music.telegram.TelegramSearchResults(query)
+        }
+
         items(viewState.history, key = { "history_${it.query}" }) { history ->
             SuggestionItem(
                 query = history.query,

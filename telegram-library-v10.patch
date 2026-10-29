@@ -1,0 +1,524 @@
+diff -urN a10/README.md b10/README.md
+--- a10/README.md	2026-10-29 10:47:40.047428715 +0000
++++ b10/README.md	2026-10-29 10:47:40.106699668 +0000
+@@ -1,349 +1,73 @@
+ <div align="center">
+ 
+-<img src="fastlane/metadata/android/en-US/images/icon.png" alt="Metrolist app icon" width="200" />
++# Gramtone
+ 
+-# Metrolist
++### YouTube Music and your own Telegram music library, in one Android app
+ 
+-### YouTube Music client for Android
+-
+-<br/>
+-
+-<a href="https://www.blacksmith.sh">
+-  <img src="assets/blacksmith-powered.png" alt="CI powered by Blacksmith" width="280" />
+-</a>
+-
+-<br/>
+-<br/>
+-
+-[![Latest release](https://img.shields.io/github/v/release/MetrolistGroup/Metrolist?style=for-the-badge&labelColor=0d1117)](https://github.com/MetrolistGroup/Metrolist/releases)
+-[![License](https://img.shields.io/github/license/MetrolistGroup/metrolist?style=for-the-badge&labelColor=0d1117)](https://github.com/MetrolistGroup/Metrolist/blob/main/LICENSE)
+-[![Downloads](https://img.shields.io/github/downloads/MetrolistGroup/Metrolist/total?style=for-the-badge&labelColor=0d1117)](https://github.com/MetrolistGroup/Metrolist/releases)
+-
+-<br/>
+-
+-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?style=for-the-badge&logo=discord&logoColor=white&labelColor=0d1117)](https://dsc.gg/metrolist)
+-[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white&labelColor=0d1117)](https://t.me/metrolistapp)
+-
+-<br/>
+-
+-[**Download**](#download-now) · [**Features**](#features) · [**Translate**](#translations) · [**FAQ**](#faq) · [**Support**](#support-the-project)
+-
+-</div>
+-
+-> [!WARNING]
+-> # MAINTENANCE MODE
+-> Metrolist is currently in maintenance mode. This means we will only be fixing bugs and making minor improvements. Please do not submit PRs for new features or major changes, as they will not be accepted.  
+-> The app is **NOT** dead, please stay tuned for updates on our discord (found above).
+-
+-> [!WARNING]
+-> **Regional Restriction** - If YouTube Music is unavailable in your region, this app will not work without a **VPN or proxy** connecting to a supported region.
+-
+----
+-
+-<div align="center">
+-
+-<h1><a id="screenshots"></a>Screenshots</h1>
+-
+-<img src="fastlane/metadata/android/en-US/images/screenshots/screenshot_1.png" alt="Home screen" width="30%" />
+-<img src="fastlane/metadata/android/en-US/images/screenshots/screenshot_2.png" alt="Artist screen" width="30%" />
+-<img src="fastlane/metadata/android/en-US/images/screenshots/screenshot_3.png" alt="Recognize music screen" width="30%" />
+-<img src="fastlane/metadata/android/en-US/images/screenshots/screenshot_4.png" alt="Listen together screen" width="30%" />
+-<img src="fastlane/metadata/android/en-US/images/screenshots/screenshot_5.png" alt="Player screen" width="30%" />
+-<img src="fastlane/metadata/android/en-US/images/screenshots/screenshot_6.png" alt="Player lyrics screen" width="30%" />
+-
+-</div>
+-
+----
+-
+-<div align="center">
+-
+-<h1><a id="features"></a>Features</h1>
+-
+-<table>
+-  <tr>
+-    <td width="50%" valign="top">
+-
+-#### Playback
+-- Stream any song or video from YouTube Music
+-- Background playback
+-- Download & cache for offline use
+-- Skip silence
+-- Sleep timer
+-
+-</td>
+-    <td width="50%" valign="top">
+-
+-#### Audio
+-- Audio normalization
+-- Tempo & pitch control
+-- Equalizer
+-- Crossfade
+-
+-</td>
+-  </tr>
+-  <tr>
+-    <td width="50%" valign="top">
+-
+-#### Lyrics & Discovery
+-- Live synced lyrics
+-- AI-powered lyrics translation
+-- Personalized quick picks
+-- Search songs, albums, artists, videos, and playlists
+-
+-</td>
+-    <td width="50%" valign="top">
+-
+-#### Library & Account
+-- Full library management
+-- Local playlists
+-- Import playlists
+-- Reorder songs in playlist or queue
+-- YouTube Music account login
+-- Sync songs, artists, albums, and playlists
+-
+-</td>
+-  </tr>
+-  <tr>
+-    <td width="50%" valign="top">
+-
+-#### Social
+-- Listen together with friends in real-time
+-- Last.fm integration for scrobbling
+-- Safe Discord Rich Presence
+-
+-</td>
+-    <td width="50%" valign="top">
+-
+-#### Interface
+-- Home screen widget
+-- Light / Dark / Black / Dynamic theme modes
+-- Dynamic color + 19 preset color palettes
+-- Built with Material 3
+-
+-</td>
+-  </tr>
+-</table>
+-
+-</div>
+-
+----
+-
+-<div align="center">
+-
+-<h1><a id="download-now"></a>Download Now</h1>
+-
+-<h2>Stable Release</h2>
+-
+-<table>
+-  <tr>
+-    <th align="center">Obtainium</th>
+-    <th align="center">IzzyOnDroid</th>
+-  </tr>
+-  <tr>
+-    <td align="center">
+-      <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/MetrolistGroup/Metrolist/">
+-        <img src="assets/badges/obtainium.svg" alt="Add Metrolist to Obtainium" height="100">
+-      </a>
+-    </td>
+-    <td align="center">
+-      <a href="https://apt.izzysoft.de/fdroid/index/apk/com.metrolist.music">
+-        <img src="assets/badges/izzyondroid.svg" alt="Get Metrolist on IzzyOnDroid" height="100">
+-      </a>
+-    </td>
+-  </tr>
+-  <tr>
+-    <th align="center">OpenAPK</th>
+-    <th align="center">GitHub</th>
+-  </tr>
+-  <tr>
+-    <td align="center">
+-      <a href="https://www.openapk.net/metrolist/com.metrolist.music/">
+-        <img src="assets/badges/openapk.svg" alt="Get Metrolist on OpenAPK" height="100">
+-      </a>
+-    </td>
+-    <td align="center">
+-      <a href="https://github.com/MetrolistGroup/Metrolist/releases/latest/download/Metrolist.apk">
+-        <img src="assets/badges/github-stable.svg" alt="Get the stable Metrolist release on GitHub" height="100">
+-      </a>
+-    </td>
+-  </tr>
+-</table>
+-
+-<h2>Nightly Build</h2>
+-
+-<table>
+-  <tr>
+-    <th align="center">GitHub</th>
+-  </tr>
+-  <tr>
+-    <td align="center">
+-      <a href="https://github.com/MetrolistGroup/Metrolist/releases/download/nightly/Metrolist-with-Google-Cast.apk">
+-        <img src="assets/badges/github-nightly.svg" alt="Get the Metrolist nightly build on GitHub" height="120">
+-      </a>
+-    </td>
+-  </tr>
+-</table>
+-
+-</div>
+-
+----
+-
+-<div align="center">
+-
+-<h1><a id="faq"></a>FAQ</h1>
+-
+-<h3>Got questions? Check out our <a href="https://metrolist.cc/#faq">FAQ page</a> for answers to the most common ones.</h3>
++<!-- logo coming soon: assets/gramtone-logo.png -->
+ 
+ </div>
+ 
+----
+-
+-<div align="center">
+-
+-<h1><a id="translations"></a>Translations</h1>
+-
+-[![Translation status](https://img.shields.io/weblate/progress/metrolist?style=for-the-badge&labelColor=0d1117)](https://hosted.weblate.org/engage/metrolist/)
++Gramtone is a fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist), the open-source YouTube Music client for Android. It keeps everything Metrolist does and adds a second music source: **your own private Telegram channel**, used as a personal music cloud.
+ 
+-<h3>We use Weblate to translate Metrolist. <a href="https://hosted.weblate.org/projects/Metrolist/">Help us bring Metrolist to more people!</a></h3>
++> **Status: early and experimental.** This is a personal project. Expect rough edges, and keep backups of any music you can't replace.
+ 
+-<a href="https://hosted.weblate.org/projects/Metrolist/">
+-  <img src="https://hosted.weblate.org/widget/Metrolist/horizontal-auto.svg" alt="Translation status" />
+-</a>
++## What Gramtone adds
+ 
+-<h3>Thank you! Every translation makes Metrolist a little more accessible to someone, somewhere in the world.</h3>
+-
+-</div>
+-
+----
+-
+-<div align="center">
++- **Telegram music library.** Point the app at a private Telegram channel that holds your music. Songs sent as audio or as plain files (MP3, FLAC, M4A and more) are found automatically.
++- **Streaming without a full download.** Songs play straight from Telegram, fetching only the parts being played, so a big FLAC doesn't need to be stored on your phone first.
++- **Albums, artists and covers.** The app reads tags (title, artist, album, year, track number, cover art) from the start of each file and builds a local catalog. Untagged files fall back to the file name.
++- **Smooth playback.** The next songs in the queue are loaded ahead of time.
++- **Offline downloads.** Telegram songs download through Metrolist's own downloader, so they play with no internet.
++- **One app, both sources.** Home, Library and Search show your Telegram music next to YouTube Music.
++- **Scan control.** Stop a scan at any time and switch to a different channel.
+ 
+-<h1><a id="support-the-project"></a>Support the Project</h1>
++Everything from Metrolist is still there: YouTube Music playback, lyrics, queue, equalizer, downloads, and more. See the [Metrolist README](https://github.com/MetrolistGroup/Metrolist#readme) for its full feature list.
+ 
+-<h3>Metrolist is free and open-source. If it brings you joy, consider supporting its development!</h3>
++## How it works
+ 
+-#### Monero (XMR)
+-
+-<img src="assets/XMR.png" alt="Monero QR code" width="150" />
+-
+-```text
+-44XjSELSWcgJTZiCKzjpCQWyXhokrH9RqH3rpp35FkSKi57T25hniHWHQNhLeXyFn3DDYqufmfRB1iEtENerZpJc7xJCcqt
++```
++Private Telegram channel (your music)
++        |  TDLib (Telegram's official client library)
++        v
++Gramtone  --  local catalog (tags, albums, covers)
++        |  ranged reads, only the bytes being played
++        v
++Metrolist's player (Media3 / ExoPlayer)
+ ```
+ 
+-#### Buy Me a Coffee
+-
+-<a href="https://www.buymeacoffee.com/mostafaalagamy">
+-  <img src="assets/buymeacoffee.png" alt="Buy Me a Coffee" width="150" />
+-</a>
+-
+-</div>
+-
+----
+-
+-<div align="center">
+-
+-<h1>Special Thanks</h1>
+-
+-<h3>Metrolist stands on the shoulders of incredible open-source work.</h3>
+-
+-<h3>Main Inspirations</h3>
+-
+-<table>
+-  <thead>
+-    <tr>
+-      <th align="center">Project</th>
+-      <th align="center">Authors</th>
+-    </tr>
+-  </thead>
+-  <tbody>
+-    <tr>
+-      <td align="center"><strong>InnerTune</strong></td>
+-      <td align="center"><a href="https://github.com/z-huang">Zion Huang</a> · <a href="https://github.com/Malopieds">Malopieds</a></td>
+-    </tr>
+-    <tr>
+-      <td align="center"><strong>OuterTune</strong></td>
+-      <td align="center"><a href="https://github.com/DD3Boh">Davide Garberi</a> · <a href="https://github.com/mikooomich">Michael Zh</a></td>
+-    </tr>
+-  </tbody>
+-</table>
+-
+-<h3>Libraries & Integrations</h3>
+-
+-<table>
+-  <thead>
+-    <tr>
+-      <th align="center">Project</th>
+-      <th align="center">Contribution</th>
+-    </tr>
+-  </thead>
+-  <tbody>
+-    <tr>
+-      <td align="center"><a href="https://better-lyrics.boidu.dev"><strong>Better Lyrics</strong></a></td>
+-      <td>Time-synced lyrics with word-by-word highlighting & YouTube Music integration</td>
+-    </tr>
+-    <tr>
+-      <td align="center"><a href="https://github.com/MetrolistGroup/metroserver"><strong>metroserver</strong></a></td>
+-      <td>Listen-together real-time backend</td>
+-    </tr>
+-    <tr>
+-      <td align="center"><a href="https://github.com/aleksey-saenko/MusicRecognizer"><strong>MusicRecognizer</strong></a></td>
+-      <td>Music recognition feature & Shazam API integration</td>
+-    </tr>
+-    <tr>
+-      <td align="center"><a href="https://github.com/ZemerTeam/zemer-cipher"><strong>zemer-cipher</strong></a></td>
+-      <td>YouTube cipher deobfuscation and PoToken generation</td>
+-    </tr>
+-    <tr>
+-      <td align="center"><a href="https://www.blacksmith.sh"><strong>Blacksmith</strong></a></td>
+-      <td>High-performance GitHub Actions runners powering our CI</td>
+-    </tr>
+-  </tbody>
+-</table>
+-
+-<br/>
+-
+-<a href="https://www.blacksmith.sh">
+-  <img src="assets/blacksmith-powered.png" alt="CI powered by Blacksmith" width="280" />
+-</a>
+-
+-<h3>We also thank the entire open-source community! For every library, tool, and API that powers this project.</h3>
+-
+-</div>
+-
+----
+-
+-<div align="center">
+-
+-<h1>Contributors</h1>
++Your Telegram login and music stay on your device and your own Telegram account. There is no Gramtone server.
+ 
+-<h3>This project wouldn't exist without these amazing people!</h3>
++## Set it up
+ 
+-<a href="https://github.com/MetrolistGroup/Metrolist/graphs/contributors">
+-  <img src="https://contrib.rocks/image?repo=MetrolistGroup/Metrolist" alt="Contributors" />
+-</a>
++1. Create a free API ID and API hash at [my.telegram.org](https://my.telegram.org) (API development tools).
++2. Make a **private** Telegram channel and upload your music to it. Well-tagged files give the best albums and covers. A tag editor such as Mp3tag helps.
++3. Open Gramtone, go to **Library**, tap **Telegram**, enter your API ID and hash, log in with your phone number, and pick your channel.
++4. Wait for the first scan to read the tags. You can press **Stop** at any time.
+ 
+-</div>
++## Build it yourself
+ 
+----
++You need a fork on GitHub (no local setup required) or JDK 21 with the Android SDK.
+ 
+-<div align="center">
++- **With GitHub Actions:** the included workflow (`.github/workflows/telegram-build.yml`) builds a debug APK and uploads it as an artifact on every push.
++- **Locally:**
++  ```
++  ./gradlew :app:assembleFossDebug
++  ```
+ 
+-<h1>Disclaimer</h1>
++## Known limits
+ 
+-This project is **not affiliated with, funded, authorized, endorsed by, or in any way associated** with YouTube, Google LLC, Metrolist Group LLC, or any of their affiliates and subsidiaries.
++- Search shows Telegram matches above the YouTube results, but there is no merged ranking yet.
++- Telegram songs are not added to Metrolist's own YouTube-based recommendations.
++- Albums need tags. Untagged songs appear in Songs but not in Albums.
++- Telegram is not designed as a bulk music store, and heavy use may be rate limited. Use your own music and keep backups.
+ 
+-All trademarks, service marks, and intellectual property rights referenced in this project belong to their respective owners.
++## Legal
+ 
+-</div>
++Gramtone is for music you own or have the right to store. It is not affiliated with, endorsed by, or sponsored by Telegram, Google, YouTube, or the Metrolist project. Those names belong to their owners.
+ 
+----
++## License and credits
+ 
+-<div align="center">
++Gramtone is free software under the **GNU GPL v3.0**, the same license as Metrolist. See [LICENSE](LICENSE).
+ 
+-<br/>
+-
+-**Made with ❤️ by [Mo Agamy](https://github.com/mostafaalagamy)**
+-
+-**This project stands with Palestine 🇵🇸**
+-
+-</div>
++It is built on the work of the [Metrolist](https://github.com/MetrolistGroup/Metrolist) team and its contributors. The Telegram connection uses [TDLib](https://github.com/tdlib/td).
+diff -urN a10/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSearch.kt b10/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSearch.kt
+--- a10/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSearch.kt	1970-01-01 00:00:00.000000000 +0000
++++ b10/app/src/main/kotlin/com/metrolist/music/telegram/TelegramSearch.kt	2026-10-29 10:47:40.103428718 +0000
+@@ -0,0 +1,94 @@
++/**
++ * Gramtone (Metrolist fork) - Telegram source
++ * Licensed under GPL-3.0
++ */
++
++package com.metrolist.music.telegram
++
++import androidx.compose.foundation.clickable
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.width
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.collectAsState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import com.metrolist.music.LocalPlayerConnection
++import com.metrolist.music.playback.queues.ListQueue
++
++/**
++ * Matches from the user's Telegram music, shown at the top of Metrolist's own search
++ * (both the YouTube Music search and the library search). Shows nothing for an empty query
++ * or when nothing matches, so YouTube results look exactly as before.
++ */
++@Composable
++fun TelegramSearchResults(query: String) {
++    val context = LocalContext.current
++    LaunchedEffect(Unit) { TelegramCatalog.init(context) }
++    val tracks by TelegramCatalog.tracks.collectAsState()
++    val playerConnection = LocalPlayerConnection.current
++    val q = query.trim().lowercase()
++    val matches = remember(tracks, q) {
++        if (q.isEmpty()) emptyList()
++        else tracks.filter {
++            it.title.lowercase().contains(q) ||
++                it.displayArtist.lowercase().contains(q) ||
++                it.displayAlbum.lowercase().contains(q)
++        }.sortedBy { it.title.lowercase() }
++    }
++    if (matches.isEmpty()) return
++
++    val shown = matches.take(6)
++    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
++        Text(
++            "From your Telegram music",
++            style = MaterialTheme.typography.titleSmall,
++            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
++        )
++        shown.forEachIndexed { index, t ->
++            Row(
++                Modifier.fillMaxWidth()
++                    .clickable {
++                        playerConnection?.playQueue(
++                            ListQueue(title = "Search", items = matches.map { it.toMediaItem() }, startIndex = index),
++                        )
++                    }
++                    .padding(horizontal = 16.dp, vertical = 6.dp),
++                verticalAlignment = Alignment.CenterVertically,
++            ) {
++                TgCover(t.coverPath, 44.dp)
++                Spacer(Modifier.width(12.dp))
++                Column(Modifier.weight(1f)) {
++                    Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
++                    Text(
++                        "${t.displayArtist} \u2022 ${t.displayAlbum}",
++                        maxLines = 1,
++                        overflow = TextOverflow.Ellipsis,
++                        style = MaterialTheme.typography.bodySmall,
++                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                }
++                Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
++            }
++        }
++        if (matches.size > shown.size) {
++            Text(
++                "+${matches.size - shown.size} more in your Telegram library",
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
++            )
++        }
++    }
++}
+diff -urN a10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/LocalSearchScreen.kt b10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/LocalSearchScreen.kt
+--- a10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/LocalSearchScreen.kt	2026-10-29 10:47:40.055268664 +0000
++++ b10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/LocalSearchScreen.kt	2026-10-29 10:47:40.102099629 +0000
+@@ -142,6 +142,9 @@
+                     .only(WindowInsetsSides.Bottom)
+                     .asPaddingValues(),
+         ) {
++            item(key = "telegram_results") {
++                com.metrolist.music.telegram.TelegramSearchResults(query)
++            }
+             result.map.forEach { (filter, items) ->
+                 if (result.filter == LocalFilter.ALL) {
+                     item(key = filter) {
+diff -urN a10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/OnlineSearchScreen.kt b10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/OnlineSearchScreen.kt
+--- a10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/OnlineSearchScreen.kt	2026-10-29 10:47:40.047428715 +0000
++++ b10/app/src/main/kotlin/com/metrolist/music/ui/screens/search/OnlineSearchScreen.kt	2026-10-29 10:47:40.101908093 +0000
+@@ -375,6 +375,10 @@
+             }
+         }
+ 
++        item(key = "telegram_results") {
++            com.metrolist.music.telegram.TelegramSearchResults(query)
++        }
++
+         items(viewState.history, key = { "history_${it.query}" }) { history ->
+             SuggestionItem(
+                 query = history.query,

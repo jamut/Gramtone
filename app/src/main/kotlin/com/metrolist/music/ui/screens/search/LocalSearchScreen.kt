@@ -142,6 +142,9 @@ fun LocalSearchScreen(
                     .only(WindowInsetsSides.Bottom)
                     .asPaddingValues(),
         ) {
+            item(key = "telegram_results") {
+                com.metrolist.music.telegram.TelegramSearchResults(query)
+            }
             result.map.forEach { (filter, items) ->
                 if (result.filter == LocalFilter.ALL) {
                     item(key = filter) {
