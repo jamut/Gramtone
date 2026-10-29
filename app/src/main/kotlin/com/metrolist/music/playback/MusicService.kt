@@ -3999,7 +3999,18 @@ class MusicService :
         DefaultMediaSourceFactory(
             createDataSourceFactory(normalizationProcessor, playerProvider),
             ExtractorsFactory {
-                arrayOf(MatroskaExtractor(), FragmentedMp4Extractor(), Mp4Extractor())
+                // YouTube formats first (unchanged); the rest are only tried when those do not match,
+                // so music files from Telegram (MP3, FLAC, OGG, WAV, AAC) can play too.
+                arrayOf(
+                    MatroskaExtractor(),
+                    FragmentedMp4Extractor(),
+                    Mp4Extractor(),
+                    androidx.media3.extractor.flac.FlacExtractor(),
+                    androidx.media3.extractor.mp3.Mp3Extractor(androidx.media3.extractor.mp3.Mp3Extractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING),
+                    androidx.media3.extractor.ogg.OggExtractor(),
+                    androidx.media3.extractor.wav.WavExtractor(),
+                    androidx.media3.extractor.ts.AdtsExtractor(),
+                )
             },
         )
 
