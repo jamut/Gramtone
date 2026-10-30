@@ -76,6 +76,7 @@ data class ReadTags(
     val discNo: Int,
     val durationSec: Int,
     val cover: ByteArray?,
+    val lyrics: String? = null,
 )
 
 object TelegramTagReader {
@@ -96,7 +97,14 @@ object TelegramTagReader {
                 text(0, 3) == "ID3" -> {
                     val footer = if ((u(head, 5) and 0x10) != 0) 10 else 0
                     val audioStart = 10L + syncsafe(head, 6) + footer
-                    withMp3Duration(reader, readId3v2(reader) ?: readId3v1(reader), audioStart)
+                    val id3 = readId3v2(reader)
+                    val behind = reader.readFully(audioStart, 4)
+                    if (behind != null && String(behind, Charsets.ISO_8859_1) == "fLaC") {
+                        // a FLAC file that starts with an ID3 tag: length and tags live in the FLAC part
+                        mergeTags(readFlac(reader, audioStart), id3)
+                    } else {
+                        withMp3Duration(reader, id3 ?: readId3v1(reader), audioStart)
+                    }
                 }
                 head.size >= 2 && u(head, 0) == 0xFF && (u(head, 1) and 0xE0) == 0xE0 ->
                     withMp3Duration(reader, readId3v1(reader), 0L)
@@ -108,6 +116,24 @@ object TelegramTagReader {
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** Prefers [a], fills any gap from [b]. */
+    private fun mergeTags(a: ReadTags?, b: ReadTags?): ReadTags? {
+        if (a == null) return b
+        if (b == null) return a
+        return ReadTags(
+            title = a.title ?: b.title,
+            artist = a.artist ?: b.artist,
+            albumArtist = a.albumArtist ?: b.albumArtist,
+            album = a.album ?: b.album,
+            year = if (a.year > 0) a.year else b.year,
+            trackNo = if (a.trackNo > 0) a.trackNo else b.trackNo,
+            discNo = if (a.discNo > 0) a.discNo else b.discNo,
+            durationSec = if (a.durationSec > 0) a.durationSec else b.durationSec,
+            cover = a.cover ?: b.cover,
+            lyrics = a.lyrics ?: b.lyrics,
+        )
     }
 
     private fun withMp3Duration(r: TelegramFileReader, tags: ReadTags?, audioStart: Long): ReadTags? {
@@ -205,9 +231,26 @@ object TelegramTagReader {
         else -> Charsets.UTF_8
     }
 
-    private fun decodeText(b: ByteArray): String {
+    /** First value of a text frame. */
+    private fun decodeText(b: ByteArray): String = decodeAll(b).substringBefore(';')
+
+    /** Every value of a text frame (ID3v2.4 separates several artists with a zero byte), joined with ";". */
+    private fun decodeAll(b: ByteArray): String {
         if (b.size <= 1) return ""
-        return String(b, 1, b.size - 1, charsetOf(u(b, 0))).substringBefore('\u0000').trim()
+        return String(b, 1, b.size - 1, charsetOf(u(b, 0)))
+            .split('\u0000')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(";")
+    }
+
+    /** USLT / ULT frame: encoding, language, descriptor, then the lyrics text. */
+    private fun decodeLyrics(b: ByteArray, ver: Int): String? {
+        if (b.size < 6) return null
+        val enc = u(b, 0)
+        val start = afterTerminator(b, 4, enc) // skip 3 language bytes and the descriptor
+        if (start >= b.size) return null
+        return String(b, start, b.size - start, charsetOf(enc)).trim('\u0000', ' ', '\n', '\r').takeIf { it.isNotEmpty() }
     }
 
     /** Index just after the string terminator that starts at [from]. */
@@ -252,6 +295,7 @@ object TelegramTagReader {
         var disc = 0
         var year = 0
         var cover: ByteArray? = null
+        var lyrics: String? = null
 
         while (pos + hdrLen <= end) {
             val h = r.readFully(pos, hdrLen) ?: break
@@ -268,16 +312,19 @@ object TelegramTagReader {
 
             val isPic = id == "APIC" || id == "PIC"
             val isText = id in TEXT_IDS
-            if (!isPic && !isText) continue
+            val isLyrics = id == "USLT" || id == "ULT"
+            if (!isPic && !isText && !isLyrics) continue
             if (isPic && (size > MAX_PIC || cover != null)) continue
             if (isText && size > 4096) continue
+            if (isLyrics && (size > 200_000 || lyrics != null)) continue
             var body = r.readFully(bodyPos, size) ?: break
             if (tagUnsync) body = deUnsync(body)
 
             when (id) {
                 "TIT2", "TT2" -> title = clean(decodeText(body))
-                "TPE1", "TP1" -> artist = clean(decodeText(body))
-                "TPE2", "TP2" -> albumArtist = clean(decodeText(body))
+                "TPE1", "TP1" -> artist = clean(decodeAll(body))
+                "TPE2", "TP2" -> albumArtist = clean(decodeAll(body))
+                "USLT", "ULT" -> lyrics = decodeLyrics(body, ver)
                 "TALB", "TAL" -> album = clean(decodeText(body))
                 "TRCK", "TRK" -> track = firstInt(decodeText(body))
                 "TPOS", "TPA" -> disc = firstInt(decodeText(body))
@@ -285,7 +332,7 @@ object TelegramTagReader {
                 "APIC", "PIC" -> cover = parseId3Picture(body, ver)
             }
         }
-        return ReadTags(title, artist, albumArtist, album, year, track, disc, 0, cover)
+        return ReadTags(title, artist, albumArtist, album, year, track, disc, 0, cover, lyrics)
     }
 
     private fun parseId3Picture(b: ByteArray, ver: Int): ByteArray? {
@@ -315,8 +362,8 @@ object TelegramTagReader {
     }
 
     // ---------- FLAC ----------
-    private fun readFlac(r: TelegramFileReader): ReadTags? {
-        val magic = r.readFully(0, 4) ?: return null
+    private fun readFlac(r: TelegramFileReader, base: Long = 0L): ReadTags? {
+        val magic = r.readFully(base, 4) ?: return null
         if (String(magic, Charsets.ISO_8859_1) != "fLaC") return null
 
         var title: String? = null
@@ -329,8 +376,11 @@ object TelegramTagReader {
         var duration = 0
         var cover: ByteArray? = null
         var coverIsFront = false
+        var lyrics: String? = null
+        val artists = ArrayList<String>()
+        val albumArtists = ArrayList<String>()
 
-        var pos = 4L
+        var pos = base + 4L
         var last = false
         while (!last && pos + 4 <= r.fileSize) {
             val h = r.readFully(pos, 4) ?: break
@@ -366,8 +416,9 @@ object TelegramTagReader {
                             val v = clean(entry.substring(eq + 1)) ?: continue
                             when (entry.substring(0, eq).uppercase()) {
                                 "TITLE" -> title = v
-                                "ARTIST" -> if (artist == null) artist = v
-                                "ALBUMARTIST", "ALBUM ARTIST" -> albumArtist = v
+                                "ARTIST" -> artists.add(v)
+                                "ALBUMARTIST", "ALBUM ARTIST" -> albumArtists.add(v)
+                                "LYRICS", "UNSYNCEDLYRICS", "UNSYNCED LYRICS" -> if (lyrics == null) lyrics = v
                                 "ALBUM" -> album = v
                                 "TRACKNUMBER" -> track = firstInt(v)
                                 "DISCNUMBER" -> disc = firstInt(v)
@@ -395,7 +446,9 @@ object TelegramTagReader {
                 }
             }
         }
-        return ReadTags(title, artist, albumArtist, album, year, track, disc, duration, cover)
+        artist = artists.joinToString(";").takeIf { it.isNotEmpty() }
+        albumArtist = albumArtists.joinToString(";").takeIf { it.isNotEmpty() }
+        return ReadTags(title, artist, albumArtist, album, year, track, disc, duration, cover, lyrics)
     }
 
     // ---------- fallback for small files of other formats (m4a, ogg...) ----------

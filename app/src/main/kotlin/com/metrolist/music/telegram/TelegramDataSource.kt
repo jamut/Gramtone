@@ -13,7 +13,6 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import org.drinkless.tdlib.TdApi
 import java.io.IOException
-import java.io.RandomAccessFile
 
 /** URI format: tg://<chatId>/<messageId> */
 object TelegramUri {
@@ -40,13 +39,13 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     private var currentUri: Uri? = null
     private var fileId = 0
     private var fileSize = 0L
-    private var path: String? = null
-    private var raf: RandomAccessFile? = null
     private var position = 0L
     private var bytesRemaining = 0L
     private var opened = false
-    private var availStart = 0L // byte window known to be on disk
+    private var availStart = 0L // byte window Telegram has downloaded
     private var availEnd = 0L
+    private var buf = ByteArray(0) // small read-ahead so we do not call TDLib for every 16 KB
+    private var bufStart = 0L
 
     override fun open(dataSpec: DataSpec): Long {
         currentUri = dataSpec.uri
@@ -74,6 +73,9 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
             if (dataSpec.length != C.LENGTH_UNSET.toLong()) dataSpec.length
             else fileSize - position
         if (bytesRemaining < 0) throw IOException("Position beyond end of file")
+        buf = ByteArray(0)
+        availStart = 0
+        availEnd = 0
         opened = true
         transferStarted(dataSpec)
         return bytesRemaining
@@ -83,46 +85,58 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         if (length == 0) return 0
         if (bytesRemaining == 0L) return C.RESULT_END_OF_INPUT
         val want = minOf(length.toLong(), bytesRemaining).toInt()
-        val available = ensureDownloaded(position, want)
-        val r = raf ?: throw IOException("File not open")
-        r.seek(position)
-        val n = r.read(buffer, offset, minOf(want.toLong(), available).toInt())
-        if (n <= 0) return C.RESULT_END_OF_INPUT
+        if (position < bufStart || position >= bufStart + buf.size) fill(position, want)
+        val inBuf = (position - bufStart).toInt()
+        val n = minOf(want, buf.size - inBuf)
+        System.arraycopy(buf, inBuf, buffer, offset, n)
         position += n
         bytesRemaining -= n
         bytesTransferred(n)
         return n
     }
 
-    /** Makes sure [pos, pos+want) is on disk; returns how many bytes from pos are readable. */
-    private fun ensureDownloaded(pos: Long, want: Int): Long {
-        if (path != null && pos >= availStart && pos < availEnd) return availEnd - pos
-        val chunk = maxOf(want.toLong(), if (pos < 1_000_000L) CHUNK else BIG_CHUNK)
-        val f = try {
-            TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true), 180)
-        } catch (e: Exception) {
-            throw IOException("Telegram download failed at byte $pos (${e.javaClass.simpleName}): ${e.message}", e)
+    /** Loads the bytes at [pos] into [buf]. Retries once if Telegram's cache changed under us. */
+    private fun fill(pos: Long, want: Int) {
+        var lastError: Exception? = null
+        repeat(2) {
+            try {
+                val avail = ensureDownloaded(pos, want)
+                val count = minOf(avail, FILL, fileSize - pos).toInt()
+                val data = TelegramClient.call(TdApi.ReadFilePart(fileId, pos, count.toLong()), 60).data
+                if (data.isEmpty()) throw IOException("Telegram returned 0 bytes")
+                buf = data
+                bufStart = pos
+                return
+            } catch (e: Exception) {
+                lastError = e
+                availStart = 0
+                availEnd = 0 // forget what we thought was downloaded, then try again
+            }
         }
-        val local = f.local
-        if (local.path.isNullOrEmpty()) throw IOException("Telegram gave no local file path at byte $pos")
-        // always reopen: TDLib can replace or move the file between requests, and a stale handle reads garbage
-        raf?.close()
-        raf = RandomAccessFile(local.path, "r")
-        path = local.path
-        // downloadedPrefixSize counts from downloadOffset
-        val readable = local.downloadOffset + local.downloadedPrefixSize - pos
-        if (readable <= 0) throw IOException("Telegram returned no data at $pos")
+        throw IOException("Telegram read failed at byte $pos (${lastError?.javaClass?.simpleName}): ${lastError?.message}", lastError)
+    }
+
+    /**
+     * Makes sure Telegram has downloaded the bytes at [pos] and returns how many are ready from there.
+     * Uses TDLib's own size report, so it works for the start of a song and for seeking anywhere.
+     */
+    private fun ensureDownloaded(pos: Long, want: Int): Long {
+        if (pos >= availStart && pos < availEnd) return availEnd - pos
+        val chunk = maxOf(want.toLong(), if (pos < 1_000_000L) CHUNK else BIG_CHUNK)
+        TelegramClient.call(TdApi.DownloadFile(fileId, 32, pos, chunk, true), 180)
+        val avail = TelegramClient.call(TdApi.GetFileDownloadedPrefixSize(fileId, pos)).size
+        if (avail <= 0) throw IOException("Telegram has no data at byte $pos")
         availStart = pos
-        availEnd = pos + readable
-        return readable
+        availEnd = pos + avail
+        return avail
     }
 
     override fun getUri(): Uri? = currentUri
 
     override fun close() {
-        raf?.close(); raf = null; path = null
         if (fileId != 0) TelegramActiveFiles.ids.remove(fileId)
         currentUri = null
+        buf = ByteArray(0)
         availStart = 0; availEnd = 0
         if (opened) { opened = false; transferEnded() }
     }
@@ -160,5 +174,6 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     companion object {
         private const val CHUNK = 512L * 1024 // small first chunk so a song starts fast
         private const val BIG_CHUNK = 4L * 1024 * 1024 // then bigger reads for smooth playback
+        private const val FILL = 256L * 1024 // how much we hand to the player per TDLib read
     }
 }

@@ -87,24 +87,26 @@ internal fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
         TgAlbum(
             key = key,
             title = sorted.first().displayAlbum,
-            artist = sorted.first().albumArtist.ifBlank { sorted.first().displayArtist },
+            artist = sorted.first().albumArtistList.joinToString(", ").ifBlank { sorted.first().displayArtist },
             year = sorted.maxOf { it.year },
             coverPath = sorted.firstNotNullOfOrNull { it.coverPath },
             tracks = sorted,
         )
     }.sortedBy { it.title.lowercase() }
 
-internal fun artistOf(t: TgTrack): String = t.albumArtist.ifBlank { t.artist }.ifBlank { "Unknown artist" }
+internal fun artistsOf(t: TgTrack): List<String> = t.artistNames
 
 private fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
-    tracks.groupBy { artistOf(it) }.map { (name, list) ->
-        TgArtist(
-            name = name,
-            albums = list.filter { it.album.isNotBlank() }.map { it.albumKey }.distinct().size,
-            tracks = list.size,
-            coverPath = list.firstNotNullOfOrNull { it.coverPath },
-        )
-    }.sortedBy { it.name.lowercase() }
+    tracks.flatMap { t -> artistsOf(t).map { name -> name to t } }
+        .groupBy({ it.first }, { it.second })
+        .map { (name, list) ->
+            TgArtist(
+                name = name,
+                albums = list.filter { it.album.isNotBlank() }.map { it.albumKey }.distinct().size,
+                tracks = list.size,
+                coverPath = list.firstNotNullOfOrNull { it.coverPath },
+            )
+        }.sortedBy { it.name.lowercase() }
 
 @Composable
 fun TelegramLibraryScreen(onBack: () -> Unit) {
@@ -328,7 +330,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
     when (tab) {
         0 -> {
             val list = tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
-                .filter { artistFilter == null || artistOf(it) == artistFilter }
+                .filter { artistFilter == null || artistsOf(it).any { n -> n == artistFilter } }
                 .sortedBy { it.title.lowercase() }
             LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item { header() }
@@ -358,7 +360,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
         }
         1 -> {
             val list = albums.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) }
-                .filter { artistFilter == null || it.artist == artistFilter }
+                .filter { artistFilter == null || it.tracks.any { t -> artistsOf(t).any { n -> n == artistFilter } } }
             LazyVerticalGrid(columns = GridCells.Adaptive(150.dp), contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item(span = { GridItemSpan(maxLineSpan) }) { header() }
                 gridItems(list, key = { it.key }) { a ->

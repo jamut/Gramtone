@@ -1233,16 +1233,20 @@ fun BottomSheetPlayer(
                             } else {
                                 FilledIconButton(
                                     onClick = {
-                                        val intent =
-                                            Intent().apply {
-                                                action = Intent.ACTION_SEND
-                                                type = "text/plain"
-                                                putExtra(
-                                                    Intent.EXTRA_TEXT,
-                                                    "https://music.youtube.com/watch?v=${mediaMetadata.id}",
-                                                )
-                                            }
-                                        context.startActivity(Intent.createChooser(intent, null))
+                                        if (com.metrolist.music.telegram.TelegramUri.isTelegramId(mediaMetadata.id)) {
+                                            com.metrolist.music.telegram.TelegramExtras.share(context, mediaMetadata.id, mediaMetadata.title)
+                                        } else {
+                                            val intent =
+                                                Intent().apply {
+                                                    action = Intent.ACTION_SEND
+                                                    type = "text/plain"
+                                                    putExtra(
+                                                        Intent.EXTRA_TEXT,
+                                                        "https://music.youtube.com/watch?v=${mediaMetadata.id}",
+                                                    )
+                                                }
+                                            context.startActivity(Intent.createChooser(intent, null))
+                                        }
                                     },
                                     shape = shareShape,
                                     colors =
@@ -1355,16 +1359,20 @@ fun BottomSheetPlayer(
                                         .clip(RoundedCornerShape(24.dp))
                                         .background(textButtonColor)
                                         .clickable {
-                                            val intent =
-                                                Intent().apply {
-                                                    action = Intent.ACTION_SEND
-                                                    type = "text/plain"
-                                                    putExtra(
-                                                        Intent.EXTRA_TEXT,
-                                                        "https://music.youtube.com/watch?v=${mediaMetadata.id}",
-                                                    )
-                                                }
-                                            context.startActivity(Intent.createChooser(intent, null))
+                                            if (com.metrolist.music.telegram.TelegramUri.isTelegramId(mediaMetadata.id)) {
+                                                com.metrolist.music.telegram.TelegramExtras.share(context, mediaMetadata.id, mediaMetadata.title)
+                                            } else {
+                                                val intent =
+                                                    Intent().apply {
+                                                        action = Intent.ACTION_SEND
+                                                        type = "text/plain"
+                                                        putExtra(
+                                                            Intent.EXTRA_TEXT,
+                                                            "https://music.youtube.com/watch?v=${mediaMetadata.id}",
+                                                        )
+                                                    }
+                                                context.startActivity(Intent.createChooser(intent, null))
+                                            }
                                         },
                             ) {
                                 Icon(

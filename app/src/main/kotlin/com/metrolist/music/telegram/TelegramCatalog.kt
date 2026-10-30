@@ -33,10 +33,18 @@ data class TgTrack(
     val fileName: String,
     val coverPath: String?,
     val indexed: Boolean,
+    val lyrics: String = "",
 ) {
     /** Stable key used to group tracks into albums. */
-    val albumKey: String get() = TelegramCatalog.albumKey(albumArtist.ifBlank { artist }, album)
-    val displayArtist: String get() = artist.ifBlank { albumArtist }.ifBlank { "Unknown artist" }
+    val albumKey: String get() = TelegramCatalog.albumKey(albumArtistList.firstOrNull() ?: artistList.firstOrNull() ?: "", album)
+
+    /** "Kanye West; Playboi Carti" in the tags becomes two artists. */
+    val artistList: List<String> get() = splitArtists(artist)
+    val albumArtistList: List<String> get() = splitArtists(albumArtist)
+
+    /** Artists shown for this song: the song's own, else the album's, else unknown. */
+    val artistNames: List<String> get() = artistList.ifEmpty { albumArtistList }.ifEmpty { listOf("Unknown artist") }
+    val displayArtist: String get() = artistNames.joinToString(", ")
     val displayAlbum: String get() = album.ifBlank { "Unknown album" }
 }
 
@@ -51,11 +59,15 @@ data class TgAlbum(
 
 data class TgArtist(val name: String, val albums: Int, val tracks: Int, val coverPath: String?)
 
+/** Splits "A; B" (also zero bytes) into separate, trimmed, distinct names. */
+fun splitArtists(raw: String): List<String> =
+    raw.split(';', '\u0000').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
 fun TgTrack.toMediaMetadata(): MediaMetadata =
     MediaMetadata(
         id = id,
         title = title,
-        artists = listOf(MediaMetadata.Artist(id = null, name = displayArtist)),
+        artists = artistNames.map { MediaMetadata.Artist(id = null, name = it) },
         duration = durationSec,
         thumbnailUrl = coverPath?.let { Uri.fromFile(File(it)).toString() },
     )
@@ -101,6 +113,12 @@ object TelegramCatalog {
 
     fun unindexed(): List<TgTrack> = query("indexed = 0")
 
+    /** Remember the length ExoPlayer found when it had to be guessed from the tags. */
+    fun setDurationIfMissing(id: String, seconds: Int) {
+        db.execSQL("UPDATE $TABLE SET duration = ? WHERE id = ? AND duration <= 0", arrayOf<Any>(seconds, id))
+        refresh()
+    }
+
     fun clear() {
         db.delete(TABLE, null, null)
         refresh()
@@ -130,6 +148,7 @@ object TelegramCatalog {
                         fileName = c.getString(c.getColumnIndexOrThrow("file_name")),
                         coverPath = c.getString(c.getColumnIndexOrThrow("cover_path")),
                         indexed = c.getInt(c.getColumnIndexOrThrow("indexed")) == 1,
+                        lyrics = c.getString(c.getColumnIndexOrThrow("lyrics")) ?: "",
                     ),
                 )
             }
@@ -152,16 +171,17 @@ object TelegramCatalog {
         put("file_name", fileName)
         put("cover_path", coverPath)
         put("indexed", if (indexed) 1 else 0)
+        put("lyrics", lyrics)
     }
 
-    private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 3) {
+    private class Helper(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 4) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE $TABLE (
                     id TEXT PRIMARY KEY, chat_id INTEGER, message_id INTEGER,
                     title TEXT, artist TEXT, album_artist TEXT, album TEXT,
                     year INTEGER, track_no INTEGER, disc_no INTEGER, duration INTEGER,
-                    file_name TEXT, cover_path TEXT, indexed INTEGER)""",
+                    file_name TEXT, cover_path TEXT, indexed INTEGER, lyrics TEXT)""",
             )
         }
 

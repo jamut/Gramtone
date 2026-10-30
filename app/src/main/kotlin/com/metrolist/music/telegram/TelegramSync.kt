@@ -209,6 +209,7 @@ object TelegramSync {
                     durationSec = tags?.durationSec?.takeIf { it > 0 } ?: t.durationSec,
                     coverPath = cover,
                     indexed = true,
+                    lyrics = tags?.lyrics ?: "",
                 )
             }
         } catch (e: Exception) {
