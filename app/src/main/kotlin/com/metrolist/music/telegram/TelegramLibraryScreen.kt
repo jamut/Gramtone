@@ -254,7 +254,17 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
     var showEdit by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(chatId) { TelegramSync.start(context, chatId) }
+    LaunchedEffect(chatId) {
+        TelegramCatalog.init(context)
+        // scanning a big channel takes a while, so don't rescan every time the screen opens;
+        // new uploads come in with the Sync button or after 15 minutes
+        val prefs = context.getSharedPreferences("tg_poc", Context.MODE_PRIVATE)
+        val stale = System.currentTimeMillis() - prefs.getLong("last_sync", 0L) > 15 * 60_000L
+        if (stale || TelegramCatalog.tracks.value.isEmpty() || TelegramCatalog.hasUnindexed()) {
+            prefs.edit().putLong("last_sync", System.currentTimeMillis()).apply()
+            TelegramSync.start(context, chatId)
+        }
+    }
     BackHandler(enabled = openAlbum != null) { openAlbum = null }
 
     if (showEdit) {
@@ -329,9 +339,11 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
 
     when (tab) {
         0 -> {
-            val list = tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
-                .filter { artistFilter == null || artistsOf(it).any { n -> n == artistFilter } }
-                .sortedBy { it.title.lowercase() }
+            val list = remember(tracks, q, artistFilter) {
+                tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
+                    .filter { artistFilter == null || artistsOf(it).any { n -> n == artistFilter } }
+                    .sortedBy { it.title.lowercase() }
+            }
             LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item { header() }
                 items(list, key = { it.id }) { t ->
@@ -359,8 +371,10 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
             }
         }
         1 -> {
-            val list = albums.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) }
-                .filter { artistFilter == null || it.tracks.any { t -> artistsOf(t).any { n -> n == artistFilter } } }
+            val list = remember(albums, q, artistFilter) {
+                albums.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) }
+                    .filter { artistFilter == null || it.tracks.any { t -> artistsOf(t).any { n -> n == artistFilter } } }
+            }
             LazyVerticalGrid(columns = GridCells.Adaptive(150.dp), contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item(span = { GridItemSpan(maxLineSpan) }) { header() }
                 gridItems(list, key = { it.key }) { a ->
@@ -390,7 +404,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                         Modifier.fillMaxWidth().clickable { artistFilter = a.name; tab = 0 }.padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TgCover(a.coverPath, 48.dp)
+                        TgArtistAvatar(a.name, a.coverPath, 48.dp)
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)

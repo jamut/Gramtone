@@ -1,8 +1,13 @@
-name: Build Telegram APK
+name: Build Gramtone APK
 
 on:
   workflow_dispatch:
   push:
+
+# a newer push cancels an older build of the same branch
+concurrency:
+  group: gramtone-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -25,7 +30,7 @@ jobs:
         run: chmod +x gradlew
 
       # Same signing key on every build, so each new APK installs OVER the old one
-      # (keeps your Telegram login). This is a throwaway debug key, not a secret.
+      # (keeps your login). This is a throwaway debug key, not a secret.
       - name: Install fixed debug keystore
         run: |
           mkdir -p ~/.android
@@ -39,5 +44,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: metrolist-telegram-apk
+          name: gramtone-apk
+          retention-days: 14
           path: app/build/outputs/apk/**/*.apk

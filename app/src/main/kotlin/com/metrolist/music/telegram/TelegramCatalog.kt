@@ -78,6 +78,7 @@ fun TgTrack.toMediaItem(): MediaItem = toMediaMetadata().toMediaItem()
 object TelegramCatalog {
     private const val DB_NAME = "telegram_catalog.db"
     private const val TABLE = "tracks"
+    private const val COLS = "id, chat_id, message_id, title, artist, album_artist, album, year, track_no, disc_no, duration, file_name, cover_path, indexed"
 
     private var helper: Helper? = null
     private val _tracks = MutableStateFlow<List<TgTrack>>(emptyList())
@@ -107,9 +108,36 @@ object TelegramCatalog {
         db.insertWithOnConflict(TABLE, null, t.toValues(), SQLiteDatabase.CONFLICT_IGNORE)
     }
 
-    fun update(t: TgTrack) {
-        db.insertWithOnConflict(TABLE, null, t.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
+    /** Many rows in a single transaction: far faster than one write per song. */
+    fun insertBasicBatch(list: List<TgTrack>) {
+        if (list.isEmpty()) return
+        val d = db
+        d.beginTransaction()
+        try {
+            for (t in list) d.insertWithOnConflict(TABLE, null, t.toValues(), SQLiteDatabase.CONFLICT_IGNORE)
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
     }
+
+    /** Updates one row. Lyrics are kept as they are unless the new row carries lyrics. */
+    fun update(t: TgTrack) {
+        val v = t.toValues()
+        if (t.lyrics.isBlank()) v.remove("lyrics")
+        if (db.update(TABLE, v, "id = ?", arrayOf(t.id)) == 0) {
+            db.insertWithOnConflict(TABLE, null, t.toValues(), SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    fun hasUnindexed(): Boolean =
+        db.rawQuery("SELECT 1 FROM $TABLE WHERE indexed = 0 LIMIT 1", null).use { it.moveToFirst() }
+
+    /** Lyrics are not kept in the in-memory list (thousands of songs); fetch them on demand. */
+    fun lyricsOf(id: String): String =
+        db.rawQuery("SELECT lyrics FROM $TABLE WHERE id = ?", arrayOf(id)).use { c ->
+            if (c.moveToFirst()) c.getString(0) ?: "" else ""
+        }
 
     fun unindexed(): List<TgTrack> = query("indexed = 0")
 
@@ -130,7 +158,7 @@ object TelegramCatalog {
 
     private fun query(where: String?): List<TgTrack> {
         val out = ArrayList<TgTrack>()
-        db.rawQuery("SELECT * FROM $TABLE" + (where?.let { " WHERE $it" } ?: ""), null).use { c ->
+        db.rawQuery("SELECT $COLS FROM $TABLE" + (where?.let { " WHERE $it" } ?: ""), null).use { c ->
             while (c.moveToNext()) {
                 out.add(
                     TgTrack(
@@ -148,7 +176,6 @@ object TelegramCatalog {
                         fileName = c.getString(c.getColumnIndexOrThrow("file_name")),
                         coverPath = c.getString(c.getColumnIndexOrThrow("cover_path")),
                         indexed = c.getInt(c.getColumnIndexOrThrow("indexed")) == 1,
-                        lyrics = c.getString(c.getColumnIndexOrThrow("lyrics")) ?: "",
                     ),
                 )
             }

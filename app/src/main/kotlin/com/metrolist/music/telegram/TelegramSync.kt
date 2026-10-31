@@ -103,13 +103,14 @@ object TelegramSync {
                 if (++emptyPages >= 2) break else continue
             }
             emptyPages = 0
+            val batch = ArrayList<TgTrack>()
             for (m in msgs) {
                 val i = info(m) ?: continue
                 found++
                 val id = TelegramUri.songId(chatId, m.id)
                 if (id in known) continue
                 val baseName = i.fileName.substringBeforeLast('.').ifBlank { "Track ${m.id}" }
-                TelegramCatalog.insertBasic(
+                batch.add(
                     TgTrack(
                         id = id,
                         chatId = chatId,
@@ -128,6 +129,7 @@ object TelegramSync {
                     ),
                 )
             }
+            TelegramCatalog.insertBasicBatch(batch) // one database transaction per page
             from = msgs.last().id
             _state.value = State.Scanning(found)
             TelegramCatalog.refresh()
@@ -161,13 +163,13 @@ object TelegramSync {
         val todo = TelegramCatalog.unindexed()
         val coverDir = TelegramCatalog.coverDir(context)
         val done = AtomicInteger(0)
-        val gate = Semaphore(3)
+        val gate = Semaphore(6)
         _state.value = State.Indexing(0, todo.size)
         todo.map { t ->
             async {
                 gate.withPermit { enrichOne(t, coverDir) }
                 val d = done.incrementAndGet()
-                if (isActive) _state.value = State.Indexing(d, todo.size)
+                if (isActive && (d % 5 == 0 || d == todo.size)) _state.value = State.Indexing(d, todo.size)
                 if (d % 25 == 0) TelegramCatalog.refresh()
             }
         }.awaitAll()
@@ -184,18 +186,31 @@ object TelegramSync {
                 fileId = i.file.id
                 val fn = fromFileName(i.fileName)
                 val reader = TelegramFileReader(i.file.id, i.file.size)
-                val tags = try { TelegramTagReader.read(reader) } finally { reader.close() }
+                fun coverFileFor(album: String?, albumArtist: String?, artist: String?): File {
+                    val a = album ?: ""
+                    val key = if (a.isBlank()) "t_${t.messageId}"
+                    else TelegramCatalog.albumKey((albumArtist ?: "").ifBlank { artist ?: i.performer.ifBlank { fn.artist } }, a)
+                    return File(coverDir, "$key.jpg")
+                }
+                // A cover is only downloaded for the first song of each album. The rest reuse it,
+                // which is what makes big channels scan quickly.
+                val tags = try {
+                    TelegramTagReader.read(reader) { partial ->
+                        !coverFileFor(partial.album, partial.albumArtist, partial.artist).exists()
+                    }
+                } finally { reader.close() }
 
                 val title = tags?.title ?: i.title.ifBlank { fn.title.ifBlank { t.title } }
                 val artist = tags?.artist ?: i.performer.ifBlank { fn.artist }
                 val albumArtist = tags?.albumArtist ?: ""
                 val album = tags?.album ?: ""
                 var cover: String? = null
-                if (tags?.cover != null) {
-                    val key = if (album.isBlank()) "t_${t.messageId}" else TelegramCatalog.albumKey(albumArtist.ifBlank { artist }, album)
-                    val f = File(coverDir, "$key.jpg")
-                    cover = synchronized(coverLock) {
-                        if (f.exists()) f.absolutePath else TelegramTagReader.saveCover(tags.cover, f)
+                val f = coverFileFor(tags?.album, tags?.albumArtist, tags?.artist)
+                cover = synchronized(coverLock) {
+                    when {
+                        f.exists() -> f.absolutePath
+                        tags?.cover != null -> TelegramTagReader.saveCover(tags.cover, f)
+                        else -> null
                     }
                 }
                 updated = t.copy(

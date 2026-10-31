@@ -2638,7 +2638,7 @@ class MusicService :
         @Player.State playbackState: Int,
     ) {
         updateInitialBufferRecovery(playbackState)
-        if (playbackState == Player.STATE_READY) com.metrolist.music.telegram.TelegramExtras.onReady(player, database)
+        if (playbackState == Player.STATE_READY) com.metrolist.music.telegram.TelegramExtras.onReady(this, player, database)
 
         if (playbackState == Player.STATE_ENDED) {
             player.currentMediaItem?.mediaId?.let { mediaId ->
@@ -4011,7 +4011,7 @@ class MusicService :
                     androidx.media3.extractor.mp3.Mp3Extractor(androidx.media3.extractor.mp3.Mp3Extractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING),
                     androidx.media3.extractor.ogg.OggExtractor(),
                     androidx.media3.extractor.wav.WavExtractor(),
-                    androidx.media3.extractor.ts.AdtsExtractor(),
+                    androidx.media3.extractor.ts.AdtsExtractor(androidx.media3.extractor.ts.AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING),
                 )
             },
         )

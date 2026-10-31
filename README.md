@@ -16,6 +16,7 @@ Gramtone is a fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist), 
 
 - **Telegram music library.** Point the app at a private Telegram channel that holds your music. Songs sent as audio or as plain files (MP3, FLAC, M4A and more) are found automatically.
 - **Streaming without a full download.** Songs play straight from Telegram, fetching only the parts being played, so a big FLAC doesn't need to be stored on your phone first.
+- **Artist photos.** The Artists tab looks up a picture of each artist (Deezer, then Wikipedia) and keeps it on your phone.
 - **Albums, artists and covers.** The app reads tags (title, artist, album, year, track number, cover art) from the start of each file and builds a local catalog. Untagged files fall back to the file name.
 - **Smooth playback.** The next songs in the queue are loaded ahead of time.
 - **Offline downloads.** Telegram songs download through Metrolist's own downloader, so they play with no internet.
@@ -49,7 +50,7 @@ Your Telegram login and music stay on your device and your own Telegram account.
 
 You need a fork on GitHub (no local setup required) or JDK 21 with the Android SDK.
 
-- **With GitHub Actions:** the included workflow (`.github/workflows/telegram-build.yml`) builds a debug APK and uploads it as an artifact on every push.
+- **With GitHub Actions:** the included workflow (`.github/workflows/gramtone-build.yml`) builds a debug APK and uploads it as an artifact on every push.
 - **Locally:**
   ```
   ./gradlew :app:assembleFossDebug

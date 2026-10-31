@@ -41,8 +41,8 @@ object TelegramExtras {
         scope.launch {
             for (id in ids) {
                 try {
-                    val lyrics = TelegramCatalog.tracks.value.firstOrNull { it.id == id }?.lyrics
-                    if (lyrics.isNullOrBlank()) continue
+                    val lyrics = TelegramCatalog.lyricsOf(id)
+                    if (lyrics.isBlank()) continue
                     if (database.lyrics(id).first() != null) continue
                     database.query { upsert(LyricsEntity(id = id, lyrics = lyrics, provider = "Tags")) }
                 } catch (e: Exception) {
@@ -56,9 +56,12 @@ object TelegramExtras {
      * When the player knows the real length of a Telegram song, remember it (catalog and Metrolist's own
      * database), so lists, the Downloaded page and Last.fm show the right time instead of 0:00.
      */
-    fun onReady(player: Player, database: MusicDatabase) {
+    private val reported = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    fun onReady(context: Context, player: Player, database: MusicDatabase) {
         val id = player.currentMediaItem?.mediaId ?: return
         if (!TelegramUri.isTelegramId(id)) return
+        checkSeekable(context, player, id)
         val ms = player.duration
         if (ms <= 0L || ms == C.TIME_UNSET) return
         val seconds = (ms / 1000L).toInt()
@@ -68,6 +71,31 @@ object TelegramExtras {
                 database.query { updateDuration(id, seconds) }
             } catch (e: Exception) {
                 // best effort
+            }
+        }
+    }
+
+    /**
+     * A few seconds after a Telegram song starts, say so out loud if the player could not find its length
+     * or cannot jump to a position, so the exact file type can be reported and fixed.
+     */
+    private fun checkSeekable(context: Context, player: Player, id: String) {
+        val app = context.applicationContext
+        scope.launch {
+            kotlinx.coroutines.delay(2500)
+            withContext(Dispatchers.Main) {
+                try {
+                    if (player.currentMediaItem?.mediaId != id) return@withContext
+                    val unknownLength = player.duration == C.TIME_UNSET
+                    if ((unknownLength || !player.isCurrentMediaItemSeekable) && reported.add(id)) {
+                        val ext = TelegramCatalog.tracks.value.firstOrNull { it.id == id }
+                            ?.fileName?.substringAfterLast('.', "?") ?: "?"
+                        val what = if (unknownLength) "can't find the length of" else "can't jump around in"
+                        Toast.makeText(app, "Gramtone: the player $what this .$ext file", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    // diagnostics only
+                }
             }
         }
     }
