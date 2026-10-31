@@ -2534,6 +2534,7 @@ class MusicService :
         mediaItem: MediaItem?,
         reason: Int,
     ) {
+        com.metrolist.music.telegram.TelegramFlacFix.dropOldCacheOnce(this, playerCache)
         com.metrolist.music.telegram.TelegramPrefetcher.onTransition(player) { id -> downloadCache.isCached(id, 0, 1) }
         com.metrolist.music.telegram.TelegramExtras.onTransition(player, database)
         // Only natural completion transitions mark the previous track as fully cached,

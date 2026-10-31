@@ -46,6 +46,10 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
     private var availEnd = 0L
     private var buf = ByteArray(0) // small read-ahead so we do not call TDLib for every 16 KB
     private var bufStart = 0L
+    private var songKey = ""
+    private var songId = ""
+    private var maybeFlac = false
+    private var flacPatch: TelegramFlacFix.Patch? = null
 
     override fun open(dataSpec: DataSpec): Long {
         currentUri = dataSpec.uri
@@ -53,13 +57,18 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         try {
             val chatId = dataSpec.uri.host!!.toLong()
             val messageId = dataSpec.uri.pathSegments[0].toLong()
+            songKey = "$chatId/$messageId"
+            songId = TelegramUri.songId(chatId, messageId)
             TelegramClient.awaitReady()
             val msg = TelegramClient.call(TdApi.GetMessage(chatId, messageId))
+            var fileName = ""
+            var mime = ""
             val file = when (val c = msg.content) {
-                is TdApi.MessageAudio -> c.audio.audio
-                is TdApi.MessageDocument -> c.document.document // music sent as a plain file
+                is TdApi.MessageAudio -> { fileName = c.audio.fileName ?: ""; mime = c.audio.mimeType ?: ""; c.audio.audio }
+                is TdApi.MessageDocument -> { fileName = c.document.fileName ?: ""; mime = c.document.mimeType ?: ""; c.document.document } // music sent as a plain file
                 else -> throw IOException("Message is not an audio file")
             }
+            maybeFlac = fileName.endsWith(".flac", ignoreCase = true) || mime.contains("flac", ignoreCase = true)
             fileId = file.id
             // size can be 0 on some files; expectedSize is Telegram's own figure
             fileSize = maxOf(file.size, file.expectedSize)
@@ -76,6 +85,17 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         buf = ByteArray(0)
         availStart = 0
         availEnd = 0
+
+        // Some FLACs have a blank length in their header, which makes the player lose the song length
+        // and refuse to seek. Work out the real length and let the player see it (the file is not changed).
+        flacPatch = if (!maybeFlac) null else try {
+            if (dataSpec.position == 0L) TelegramFlacFix.patchFor(songKey, fileSize) { p, l -> readRaw(p, l) }
+            else TelegramFlacFix.cached(songKey)
+        } catch (e: Exception) {
+            null
+        }
+        flacPatch?.let { TelegramCatalog.setDurationIfMissing(songId, it.durationSec) }
+
         opened = true
         transferStarted(dataSpec)
         return bytesRemaining
@@ -89,10 +109,27 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         val inBuf = (position - bufStart).toInt()
         val n = minOf(want, buf.size - inBuf)
         System.arraycopy(buf, inBuf, buffer, offset, n)
+        flacPatch?.applyTo(position, buffer, offset, n)
         position += n
         bytesRemaining -= n
         bytesTransferred(n)
         return n
+    }
+
+    /** Reads exactly [len] bytes at [pos] straight from Telegram's copy, or null if that is not possible. */
+    private fun readRaw(pos: Long, len: Int): ByteArray? {
+        if (len < 0 || pos < 0 || pos + len > fileSize) return null
+        val out = ByteArray(len)
+        var got = 0
+        while (got < len) {
+            val avail = ensureDownloaded(pos + got, len - got)
+            val n = minOf(avail, (len - got).toLong()).toInt()
+            val d = TelegramClient.call(TdApi.ReadFilePart(fileId, pos + got, n.toLong()), 60).data
+            if (d.isEmpty()) return null
+            System.arraycopy(d, 0, out, got, d.size)
+            got += d.size
+        }
+        return out
     }
 
     /** Loads the bytes at [pos] into [buf]. Retries once if Telegram's cache changed under us. */
@@ -137,6 +174,7 @@ class TelegramDataSource : BaseDataSource(/* isNetwork = */ true) {
         if (fileId != 0) TelegramActiveFiles.ids.remove(fileId)
         currentUri = null
         buf = ByteArray(0)
+        flacPatch = null
         availStart = 0; availEnd = 0
         if (opened) { opened = false; transferEnded() }
     }

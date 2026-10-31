@@ -411,7 +411,10 @@ object TelegramTagReader {
                 if (b != null) {
                     val rate = (u(b, 10) shl 12) or (u(b, 11) shl 4) or (u(b, 12) shr 4)
                     val total = ((u(b, 13) and 0x0F).toLong() shl 32) or be32(b, 14)
-                    if (rate > 0) duration = (total / rate).toInt()
+                    if (rate > 0) {
+                        duration = if (total > 0) (total / rate).toInt()
+                        else TelegramFlacFix.analyze(r.fileSize) { p, l -> r.readFully(p, l) }?.durationSec ?: 0
+                    }
                 }
             } else if (type == 4 && len in 8..1_000_000) {
                 val b = r.readFully(bodyPos, len)
