@@ -11,6 +11,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -24,7 +26,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import org.drinkless.tdlib.TdApi
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /** Scans a Telegram chat for music and fills [TelegramCatalog] (tags, albums, covers). */
 object TelegramSync {
@@ -159,60 +163,142 @@ object TelegramSync {
 
     private val coverLock = Any()
 
-    private suspend fun enrich(context: Context) = coroutineScope {
-        val todo = TelegramCatalog.unindexed()
-        val coverDir = TelegramCatalog.coverDir(context)
-        val done = AtomicInteger(0)
-        val gate = Semaphore(6)
-        _state.value = State.Indexing(0, todo.size)
-        todo.map { t ->
-            async {
-                gate.withPermit { enrichOne(t, coverDir) }
-                val d = done.incrementAndGet()
-                if (isActive && (d % 5 == 0 || d == todo.size)) _state.value = State.Indexing(d, todo.size)
-                if (d % 25 == 0) TelegramCatalog.refresh()
+    /** Album covers some worker is already fetching, so parallel workers do not all download the same picture. */
+    private val coverClaims = ConcurrentHashMap.newKeySet<String>()
+
+    private const val WORKERS = 10
+
+    /**
+     * Reads the tags of every song that has not been read yet.
+     * Built for channels with thousands of songs:
+     *  - song info comes 100 at a time (one request instead of one per song);
+     *  - 10 songs are read at once, and only the first bytes of each file are downloaded;
+     *  - an album's cover is downloaded once, by the first song that finds it missing;
+     *  - results are saved in batches, and the on-screen list is refreshed every few seconds.
+     */
+    private suspend fun enrich(context: Context) {
+        coroutineScope {
+            val todo = TelegramCatalog.unindexed()
+            if (todo.isEmpty()) return@coroutineScope
+            val coverDir = TelegramCatalog.coverDir(context)
+            val total = todo.size
+            val done = AtomicInteger(0)
+            val lastRefresh = AtomicLong(System.currentTimeMillis())
+            val pending = ArrayList<TgTrack>()
+            coverClaims.clear()
+            _state.value = State.Indexing(0, total)
+
+            fun flush() {
+                val batch = synchronized(pending) {
+                    val copy = ArrayList(pending)
+                    pending.clear()
+                    copy
+                }
+                if (batch.isNotEmpty()) TelegramCatalog.updateBatch(batch)
             }
-        }.awaitAll()
-        Unit
+
+            val queue = Channel<Pair<TgTrack, Info?>>(200)
+            val producer = launch {
+                for (chunk in todo.chunked(100)) {
+                    val infos = fetchInfos(chunk)
+                    for (t in chunk) queue.send(Pair(t, infos[t.messageId]))
+                }
+                queue.close()
+            }
+            try {
+                val workers = List(WORKERS) {
+                    launch {
+                        for (item in queue) {
+                            val updated = enrichOne(item.first, item.second, coverDir)
+                            val flushNow = synchronized(pending) {
+                                pending.add(updated)
+                                pending.size >= 40
+                            }
+                            if (flushNow) flush()
+                            val d = done.incrementAndGet()
+                            if (isActive && (d % 10 == 0 || d == total)) _state.value = State.Indexing(d, total)
+                            val now = System.currentTimeMillis()
+                            val last = lastRefresh.get()
+                            if (now - last > 2500 && lastRefresh.compareAndSet(last, now)) {
+                                flush()
+                                TelegramCatalog.refresh()
+                            }
+                        }
+                    }
+                }
+                workers.joinAll()
+                producer.join()
+            } finally {
+                flush() // keep what was read even when stopped
+                TelegramCatalog.dropMissingCovers()
+            }
+        }
     }
 
-    private fun enrichOne(t: TgTrack, coverDir: File) {
+    /** File info for up to 100 songs in one request. A song missing from the answer is fetched on its own later. */
+    private fun fetchInfos(chunk: List<TgTrack>): Map<Long, Info> {
+        return try {
+            val ids = LongArray(chunk.size) { chunk[it].messageId }
+            val msgs = TelegramClient.call(TdApi.GetMessages(chunk.first().chatId, ids)).messages
+            val out = HashMap<Long, Info>()
+            for (m in msgs) {
+                if (m == null) continue
+                val i = info(m) ?: continue
+                out[m.id] = i
+            }
+            out
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun enrichOne(t: TgTrack, pre: Info?, coverDir: File): TgTrack {
         var updated = t.copy(indexed = true)
         var fileId = 0
         try {
-            val msg = TelegramClient.call(TdApi.GetMessage(t.chatId, t.messageId))
-            val i = info(msg)
+            val i = pre ?: info(TelegramClient.call(TdApi.GetMessage(t.chatId, t.messageId)))
             if (i != null) {
                 fileId = i.file.id
                 val fn = fromFileName(i.fileName)
                 val reader = TelegramFileReader(i.file.id, i.file.size)
                 fun coverFileFor(album: String?, albumArtist: String?, artist: String?): File {
                     val a = album ?: ""
-                    val key = if (a.isBlank()) "t_${t.messageId}"
-                    else TelegramCatalog.albumKey((albumArtist ?: "").ifBlank { artist ?: i.performer.ifBlank { fn.artist } }, a)
+                    val base = (albumArtist ?: "").ifBlank { artist ?: i.performer.ifBlank { fn.artist } }
+                    val key = if (a.isBlank()) "t_${t.messageId}" else TelegramCatalog.albumKey(base.substringBefore(';').trim(), a)
                     return File(coverDir, "$key.jpg")
                 }
-                // A cover is only downloaded for the first song of each album. The rest reuse it,
-                // which is what makes big channels scan quickly.
+                // The first song of an album fetches its cover; the rest reuse it.
+                var claimed: String? = null
                 val tags = try {
                     TelegramTagReader.read(reader) { partial ->
-                        !coverFileFor(partial.album, partial.albumArtist, partial.artist).exists()
+                        val f = coverFileFor(partial.album, partial.albumArtist, partial.artist)
+                        if (f.exists() || !coverClaims.add(f.path)) {
+                            false
+                        } else {
+                            claimed = f.path
+                            true
+                        }
                     }
-                } finally { reader.close() }
+                } finally {
+                    reader.close()
+                }
 
                 val title = tags?.title ?: i.title.ifBlank { fn.title.ifBlank { t.title } }
                 val artist = tags?.artist ?: i.performer.ifBlank { fn.artist }
                 val albumArtist = tags?.albumArtist ?: ""
                 val album = tags?.album ?: ""
-                var cover: String? = null
                 val f = coverFileFor(tags?.album, tags?.albumArtist, tags?.artist)
-                cover = synchronized(coverLock) {
+                val mine = claimed
+                val cover: String? = synchronized(coverLock) {
                     when {
                         f.exists() -> f.absolutePath
                         tags?.cover != null -> TelegramTagReader.saveCover(tags.cover, f)
+                        coverClaims.contains(f.path) && mine != f.path -> f.absolutePath // another worker is saving it
                         else -> null
                     }
                 }
+                if (mine != null && !File(mine).exists()) coverClaims.remove(mine) // claimed but the file had no picture
+
                 updated = t.copy(
                     title = title,
                     artist = artist,
@@ -230,8 +316,8 @@ object TelegramSync {
         } catch (e: Exception) {
             // keep the basic info from Telegram; don't retry forever
         }
-        TelegramCatalog.update(updated)
         // don't let tag-reading fill the phone, but never delete a file that is playing right now
         if (fileId != 0 && fileId !in TelegramActiveFiles.ids) TelegramClient.deleteLocalFile(fileId)
+        return updated
     }
 }

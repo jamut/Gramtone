@@ -44,7 +44,7 @@ object TelegramFlacFix {
     /** Looks at the file once per key and remembers the answer. */
     fun patchFor(key: String, fileSize: Long, read: (pos: Long, len: Int) -> ByteArray?): Patch? {
         decided[key]?.let { return it.patch }
-        val patch = analyze(fileSize, read)?.patch
+        val patch = analyze(fileSize, TAIL, read)?.patch
         decided[key] = Optional(patch)
         return patch
     }
@@ -53,7 +53,7 @@ object TelegramFlacFix {
      * Reads the FLAC header and, if its total length is 0, finds the real one.
      * Returns null for anything that is not a FLAC file or cannot be analysed.
      */
-    fun analyze(fileSize: Long, read: (pos: Long, len: Int) -> ByteArray?): Result? {
+    fun analyze(fileSize: Long, tailBytes: Int = TAIL, read: (pos: Long, len: Int) -> ByteArray?): Result? {
         if (fileSize < 64) return null
         val head = read(0, 10) ?: return null
         var start = 0L
@@ -78,7 +78,7 @@ object TelegramFlacFix {
             ((si[16].toLong() and 0xFF) shl 8) or (si[17].toLong() and 0xFF)
         if (total > 0) return Result((total / sampleRate).toInt(), null) // header is fine
 
-        val tailLen = minOf(TAIL.toLong(), fileSize).toInt()
+        val tailLen = minOf(tailBytes.toLong(), fileSize).toInt()
         val tail = read(fileSize - tailLen, tailLen) ?: return null
         val real = totalSamplesFromFrames(tail, minBlock) ?: return null
         val seconds = real / sampleRate
@@ -193,21 +193,3 @@ object TelegramFlacFix {
     }
 }
 
-/**
- * Songs played before this fix may have their (uncorrected) first bytes saved in the player's cache,
- * and the player would keep reading those. Forget the Telegram songs in that cache, once.
- * Downloaded songs are left alone; re-download a FLAC if it still cannot seek.
- */
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-fun TelegramFlacFix.dropOldCacheOnce(context: android.content.Context, cache: androidx.media3.datasource.cache.Cache) {
-    val prefs = context.getSharedPreferences("tg_poc", android.content.Context.MODE_PRIVATE)
-    if (prefs.getBoolean("flac_cache_dropped_v1", false)) return
-    prefs.edit().putBoolean("flac_cache_dropped_v1", true).apply()
-    try {
-        for (key in cache.keys.toList()) {
-            if (TelegramUri.isTelegramId(key)) cache.removeResource(key)
-        }
-    } catch (e: Exception) {
-        // best effort
-    }
-}

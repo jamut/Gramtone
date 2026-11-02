@@ -109,13 +109,24 @@ object TelegramTagReader {
                 head.size >= 2 && u(head, 0) == 0xFF && (u(head, 1) and 0xE0) == 0xE0 ->
                     withMp3Duration(reader, readId3v1(reader), 0L)
                 // m4a / ogg: Android's reader, only for small files (it can read a lot of the file)
-                text(4, 4) == "ftyp" || text(0, 4) == "OggS" ->
-                    if (reader.fileSize <= RETRIEVER_MAX_BYTES) readWithRetriever(reader) else null
+                text(4, 4) == "ftyp" || text(0, 4) == "OggS" ||
+                    ((text(0, 4) == "RIFF" || text(0, 4) == "RF64") && text(8, 4) == "WAVE") ->
+                    fromContainer(reader, needCover)
+                        ?: if (reader.fileSize <= RETRIEVER_MAX_BYTES) readWithRetriever(reader) else null
                 else -> null // unknown format: keep the file-name info
             }
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** M4A / ALAC / AAC in MP4, Ogg Vorbis, Opus and WAV, without downloading the whole file. */
+    private fun fromContainer(r: TelegramFileReader, needCover: (ReadTags) -> Boolean): ReadTags? {
+        val c = TelegramContainerTags.read(r.fileSize) { p, l -> r.readFully(p, l) } ?: return null
+        val partial = ReadTags(c.title, c.artist, c.albumArtist, c.album, c.year, c.trackNo, c.discNo, c.durationSec, null, c.lyrics)
+        val loader = c.loadCover
+        val cover = if (loader != null && needCover(partial)) loader() else null
+        return partial.copy(cover = cover)
     }
 
     /** Prefers [a], fills any gap from [b]. */
@@ -413,7 +424,7 @@ object TelegramTagReader {
                     val total = ((u(b, 13) and 0x0F).toLong() shl 32) or be32(b, 14)
                     if (rate > 0) {
                         duration = if (total > 0) (total / rate).toInt()
-                        else TelegramFlacFix.analyze(r.fileSize) { p, l -> r.readFully(p, l) }?.durationSec ?: 0
+                        else TelegramFlacFix.analyze(r.fileSize, 96 * 1024) { p, l -> r.readFully(p, l) }?.durationSec ?: 0
                     }
                 }
             } else if (type == 4 && len in 8..1_000_000) {

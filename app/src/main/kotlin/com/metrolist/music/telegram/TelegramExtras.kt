@@ -12,6 +12,7 @@ import androidx.core.content.FileProvider
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import com.metrolist.music.db.MusicDatabase
+import com.metrolist.music.extensions.metadata
 import com.metrolist.music.db.entities.LyricsEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,24 +28,33 @@ object TelegramExtras {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * Gives Metrolist the lyrics stored inside the song's tags (current song and the next two),
-     * unless it already has lyrics for that song, so nothing is overwritten.
+     * Metrolist only keeps a song in its own database once it is saved there. Without that the heart button,
+     * play history and play counts have nothing to attach to, so save the current song (and the next two) here.
+     * Also gives Metrolist the lyrics stored inside the song's tags, unless it already has lyrics for that song.
      */
     fun onTransition(player: Player, database: MusicDatabase) {
         val count = player.mediaItemCount
         if (count == 0) return
         val cur = player.currentMediaItemIndex
-        val ids = (cur..minOf(cur + 2, count - 1))
-            .map { player.getMediaItemAt(it).mediaId }
-            .filter { TelegramUri.isTelegramId(it) }
-        if (ids.isEmpty()) return
+        val items = (cur..minOf(cur + 2, count - 1))
+            .map { player.getMediaItemAt(it) }
+            .filter { TelegramUri.isTelegramId(it.mediaId) }
+            .map { Pair(it.mediaId, it.metadata) }
+        if (items.isEmpty()) return
         scope.launch {
-            for (id in ids) {
+            for ((id, metadata) in items) {
+                try {
+                    if (metadata != null && database.song(id).first() == null) {
+                        database.query { insert(metadata) }
+                    }
+                } catch (e: Exception) {
+                    // saving is best effort
+                }
                 try {
                     val lyrics = TelegramCatalog.lyricsOf(id)
-                    if (lyrics.isBlank()) continue
-                    if (database.lyrics(id).first() != null) continue
-                    database.query { upsert(LyricsEntity(id = id, lyrics = lyrics, provider = "Tags")) }
+                    if (lyrics.isNotBlank() && database.lyrics(id).first() == null) {
+                        database.query { upsert(LyricsEntity(id = id, lyrics = lyrics, provider = "Tags")) }
+                    }
                 } catch (e: Exception) {
                     // lyrics are optional
                 }

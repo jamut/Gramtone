@@ -39,8 +39,8 @@ data class TgTrack(
     val albumKey: String get() = TelegramCatalog.albumKey(albumArtistList.firstOrNull() ?: artistList.firstOrNull() ?: "", album)
 
     /** "Kanye West; Playboi Carti" in the tags becomes two artists. */
-    val artistList: List<String> get() = splitArtists(artist)
-    val albumArtistList: List<String> get() = splitArtists(albumArtist)
+    val artistList: List<String> by lazy { splitArtists(artist) }
+    val albumArtistList: List<String> by lazy { splitArtists(albumArtist) }
 
     /** Artists shown for this song: the song's own, else the album's, else unknown. */
     val artistNames: List<String> get() = artistList.ifEmpty { albumArtistList }.ifEmpty { listOf("Unknown artist") }
@@ -60,8 +60,7 @@ data class TgAlbum(
 data class TgArtist(val name: String, val albums: Int, val tracks: Int, val coverPath: String?)
 
 /** Splits "A; B" (also zero bytes) into separate, trimmed, distinct names. */
-fun splitArtists(raw: String): List<String> =
-    raw.split(';', '\u0000').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+fun splitArtists(raw: String): List<String> = ArtistSplit.split(raw)
 
 fun TgTrack.toMediaMetadata(): MediaMetadata =
     MediaMetadata(
@@ -153,7 +152,36 @@ object TelegramCatalog {
     }
 
     fun refresh() {
-        _tracks.value = query(null)
+        val list = query(null)
+        // let the splitter learn which names exist as artists on their own
+        ArtistSplit.learn(list.flatMap { listOf(it.artist, it.albumArtist) }.filter { it.isNotBlank() })
+        _tracks.value = list
+    }
+
+    /** Several updates in one database transaction. */
+    fun updateBatch(list: List<TgTrack>) {
+        if (list.isEmpty()) return
+        val d = db
+        d.beginTransaction()
+        try {
+            for (t in list) update(t)
+            d.setTransactionSuccessful()
+        } finally {
+            d.endTransaction()
+        }
+    }
+
+    /** A song that points at a cover file that never got saved goes back to "no cover". */
+    fun dropMissingCovers() {
+        var changed = false
+        for (t in query("cover_path IS NOT NULL")) {
+            val missing = t.coverPath?.let { !File(it).exists() } ?: false
+            if (missing) {
+                db.execSQL("UPDATE $TABLE SET cover_path = NULL WHERE id = ?", arrayOf<Any>(t.id))
+                changed = true
+            }
+        }
+        if (changed) refresh()
     }
 
     private fun query(where: String?): List<TgTrack> {

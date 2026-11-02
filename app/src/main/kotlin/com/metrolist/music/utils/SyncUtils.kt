@@ -712,15 +712,19 @@ class SyncUtils @Inject constructor(
     }
 
     private suspend fun executeLikeSong(s: SongEntity) = withContext(Dispatchers.IO) {
-        if (!isLoggedIn()) {
+        // A Telegram song is not a YouTube video: never send it to YouTube (it still goes to Last.fm below)
+        val telegram = com.metrolist.music.telegram.TelegramUri.isTelegramId(s.id)
+        if (!telegram && !isLoggedIn()) {
             Timber.w("Skipping likeSong - user not logged in")
             return@withContext
         }
 
-        withRetry {
-            YouTube.likeVideo(s.id, s.liked)
-        }.onFailure { e ->
-            Timber.e(e, "Failed to like song on YouTube: ${s.id}")
+        if (!telegram) {
+            withRetry {
+                YouTube.likeVideo(s.id, s.liked)
+            }.onFailure { e ->
+                Timber.e(e, "Failed to like song on YouTube: ${s.id}")
+            }
         }
 
         if (lastfmSendLikes) {
