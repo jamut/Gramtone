@@ -1263,6 +1263,10 @@ interface DatabaseDao {
     @Query("UPDATE song SET duration = :duration WHERE id = :songId AND duration <= 0")
     fun updateDuration(songId: String, duration: Int)
 
+    /** How many times each song was played (one row per play event). Used for "Plays" sorting. */
+    @Query("SELECT songId, COUNT(*) AS plays FROM event GROUP BY songId")
+    fun playCounts(): Flow<List<PlayCount>>
+
     @Query("UPDATE song SET playbackPosition = :position WHERE id = :songId")
     fun updatePlaybackPosition(songId: String, position: Long?)
 
@@ -2047,3 +2051,6 @@ interface DatabaseDao {
     @Delete
     fun delete(podcast: PodcastEntity)
 }
+
+/** A song and how many times it was played. */
+data class PlayCount(val songId: String, val plays: Int)

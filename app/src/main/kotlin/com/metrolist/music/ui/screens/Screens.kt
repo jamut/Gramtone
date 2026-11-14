@@ -24,6 +24,13 @@ sealed class Screens(
         route = "home"
     )
 
+    object Vault : Screens(
+        titleId = R.string.vault_title,
+        iconIdInactive = R.drawable.vault_outlined,
+        iconIdActive = R.drawable.vault_filled,
+        route = "vault"
+    )
+
     object Search : Screens(
         titleId = R.string.search,
         iconIdInactive = R.drawable.search,
@@ -46,6 +53,6 @@ sealed class Screens(
     )
 
     companion object {
-        val MainScreens = listOf(Home, Search, ListenTogether, Library)
+        val MainScreens = listOf(Home, Vault, Search, ListenTogether, Library)
     }
 }

@@ -4,7 +4,7 @@
 
 ### YouTube Music and your own Telegram music library, in one Android app
 
-<!-- logo coming soon: assets/gramtone-logo.png -->
+<img src="assets/gramtone-logo.png" width="160" alt="Gramtone logo">
 
 </div>
 

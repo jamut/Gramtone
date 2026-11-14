@@ -74,7 +74,16 @@ fun NavGraphBuilder.navigationBuilder(
     snackbarHostState: SnackbarHostState,
 ) {
     composable(Screens.Home.route) {
-        HomeScreen(snackbarHostState = snackbarHostState)
+        // Gramtone Vault is the main Home; the top-bar button switches to YouTube Music's own Home
+        if (com.metrolist.music.telegram.rememberHomeIsVault()) {
+            com.metrolist.music.telegram.VaultHomeScreen(navController)
+        } else {
+            HomeScreen(snackbarHostState = snackbarHostState)
+        }
+    }
+
+    composable(Screens.Vault.route) {
+        com.metrolist.music.telegram.VaultScreen()
     }
 
     composable(Screens.Search.route) { backStackEntry ->

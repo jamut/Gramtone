@@ -52,7 +52,7 @@ fun TelegramSearchResults(query: String) {
     val shown = matches.take(6)
     Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
         Text(
-            "From your Telegram music",
+            "From your Gramtone Vault",
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
         )
@@ -84,7 +84,7 @@ fun TelegramSearchResults(query: String) {
         }
         if (matches.size > shown.size) {
             Text(
-                "+${matches.size - shown.size} more in your Telegram library",
+                "+${matches.size - shown.size} more in your Gramtone Vault",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),

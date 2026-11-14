@@ -775,6 +775,7 @@ class MainActivity : FragmentActivity() {
                         listOf(
                             Screens.Home.route,
                             Screens.Library.route,
+                            Screens.Vault.route,
                             Screens.ListenTogether.route,
                             "settings",
                         )
@@ -1014,6 +1015,7 @@ class MainActivity : FragmentActivity() {
                     remember(navBackStackEntry) {
                         when (navBackStackEntry?.destination?.route) {
                             Screens.Home.route -> R.string.home
+                            Screens.Vault.route -> R.string.vault_title
                             Screens.Search.route -> R.string.search
                             Screens.Library.route -> R.string.filter_library
                             Screens.ListenTogether.route -> R.string.together
@@ -1067,6 +1069,19 @@ class MainActivity : FragmentActivity() {
                                             )
                                         },
                                         actions = {
+                                            if (navBackStackEntry?.destination?.route == Screens.Home.route) {
+                                                val homeIsVault = com.metrolist.music.telegram.rememberHomeIsVault()
+                                                androidx.compose.material3.IconButton(
+                                                    onClick = { com.metrolist.music.telegram.HomeSource.toggle() },
+                                                ) {
+                                                    androidx.compose.material3.Icon(
+                                                        painter = androidx.compose.ui.res.painterResource(
+                                                            if (homeIsVault) R.drawable.source_switch_filled else R.drawable.source_switch_outlined,
+                                                        ),
+                                                        contentDescription = "Switch between Gramtone Vault and YouTube Music",
+                                                    )
+                                                }
+                                            }
                                             if (showHistoryButton) {
                                                 IconButton(onClick = { navController.navigate("history") }) {
                                                     Icon(

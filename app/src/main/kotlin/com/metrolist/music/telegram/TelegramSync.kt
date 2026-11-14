@@ -97,12 +97,18 @@ object TelegramSync {
 
     private suspend fun scan(chatId: Long) {
         val known = TelegramCatalog.knownIds()
-        var from = 0L
+        // Telegram only fetches a channel's newest messages once the chat is opened, so open it first and
+        // start from the newest message it reports. Without this, a Sync after a new upload found nothing.
+        runCatching { TelegramClient.call(TdApi.OpenChat(chatId)) }
+        val newestId = runCatching { TelegramClient.call(TdApi.GetChat(chatId)).lastMessage?.id ?: 0L }.getOrDefault(0L)
+        var from = newestId
+        var firstOffset = if (newestId != 0L) -1 else 0
         var found = 0
         var emptyPages = 0
         while (true) {
             currentCoroutineContext().ensureActive()
-            val msgs = TelegramClient.call(TdApi.GetChatHistory(chatId, from, 0, 100, false)).messages
+            val msgs = TelegramClient.call(TdApi.GetChatHistory(chatId, from, firstOffset, 100, false)).messages
+            firstOffset = 0
             if (msgs.isEmpty()) {
                 if (++emptyPages >= 2) break else continue
             }

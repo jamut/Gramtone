@@ -35,6 +35,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
@@ -67,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadService
+import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalDownloadUtil
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.playback.ExoDownloadService
@@ -96,7 +99,7 @@ internal fun buildAlbums(tracks: List<TgTrack>): List<TgAlbum> =
 
 internal fun artistsOf(t: TgTrack): List<String> = t.artistNames
 
-private fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
+internal fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
     tracks.flatMap { t -> artistsOf(t).map { name -> name to t } }
         .groupBy({ it.first }, { it.second })
         .map { (name, list) ->
@@ -109,7 +112,7 @@ private fun buildArtists(tracks: List<TgTrack>): List<TgArtist> =
         }.sortedBy { it.name.lowercase() }
 
 @Composable
-fun TelegramLibraryScreen(onBack: () -> Unit) {
+fun TelegramLibraryScreen(onBack: (() -> Unit)? = null) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("tg_poc", Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
@@ -120,7 +123,7 @@ fun TelegramLibraryScreen(onBack: () -> Unit) {
     var chatId by remember { mutableStateOf(prefs.getLong("chat_id", 0L)) }
 
     when {
-        auth != TelegramClient.AuthState.READY -> TgLoginPanel(prefs, onBack)
+        auth != TelegramClient.AuthState.READY -> VaultConnect(prefs)
         chatId == 0L -> TgChannelPicker(onBack) { id, title ->
             prefs.edit().putLong("chat_id", id).putString("chat_title", title).apply()
             TelegramCatalog.clear()
@@ -139,51 +142,7 @@ fun TelegramLibraryScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun TgLoginPanel(prefs: android.content.SharedPreferences, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val auth by TelegramClient.auth.collectAsState()
-    var apiId by remember { mutableStateOf(prefs.getString("id", "") ?: "") }
-    var apiHash by remember { mutableStateOf(prefs.getString("hash", "") ?: "") }
-    var input by remember { mutableStateOf("") }
-
-    Column(
-        Modifier.fillMaxSize().padding(LocalPlayerAwareWindowInsets.current.asPaddingValues()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        TextButton(onClick = onBack) { Text("< Back to library") }
-        Text("Connect Telegram", style = MaterialTheme.typography.titleLarge)
-        when (auth) {
-            TelegramClient.AuthState.NOT_STARTED, TelegramClient.AuthState.ERROR -> {
-                Text("Get api_id and api_hash at my.telegram.org", style = MaterialTheme.typography.bodyMedium)
-                OutlinedTextField(apiId, { apiId = it }, label = { Text("api_id") }, singleLine = true)
-                OutlinedTextField(apiHash, { apiHash = it }, label = { Text("api_hash") }, singleLine = true)
-                Button(onClick = {
-                    val idNum = apiId.trim().toIntOrNull()
-                    if (idNum != null && apiHash.isNotBlank()) {
-                        prefs.edit().putString("id", apiId.trim()).putString("hash", apiHash.trim()).apply()
-                        TelegramClient.start(context.applicationContext, idNum, apiHash.trim())
-                    }
-                }) { Text("Start") }
-            }
-            TelegramClient.AuthState.WAIT_PHONE -> {
-                OutlinedTextField(input, { input = it }, label = { Text("Phone, e.g. +639...") }, singleLine = true)
-                Button(onClick = { TelegramClient.submitPhone(input.trim()); input = "" }) { Text("Send code") }
-            }
-            TelegramClient.AuthState.WAIT_CODE -> {
-                OutlinedTextField(input, { input = it }, label = { Text("Login code") }, singleLine = true)
-                Button(onClick = { TelegramClient.submitCode(input.trim()); input = "" }) { Text("Submit") }
-            }
-            TelegramClient.AuthState.WAIT_PASSWORD -> {
-                OutlinedTextField(input, { input = it }, label = { Text("2FA password") }, singleLine = true)
-                Button(onClick = { TelegramClient.submitPassword(input); input = "" }) { Text("Submit") }
-            }
-            TelegramClient.AuthState.READY -> Text("Connected")
-        }
-    }
-}
-
-@Composable
-private fun TgChannelPicker(onBack: () -> Unit, onPicked: (Long, String) -> Unit) {
+private fun TgChannelPicker(onBack: (() -> Unit)?, onPicked: (Long, String) -> Unit) {
     val scope = rememberCoroutineScope()
     var chats by remember { mutableStateOf<List<TdApi.Chat>>(emptyList()) }
     var status by remember { mutableStateOf("") }
@@ -199,8 +158,8 @@ private fun TgChannelPicker(onBack: () -> Unit, onPicked: (Long, String) -> Unit
     LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
         item {
             Column(Modifier.padding(16.dp)) {
-                TextButton(onClick = onBack) { Text("< Back to library") }
-                Text("Pick your music channel", style = MaterialTheme.typography.titleLarge)
+                if (onBack != null) TextButton(onClick = onBack) { Text("< Back to Vault") }
+                Text("Pick Your Channel", style = MaterialTheme.typography.titleLarge)
                 if (status.isNotEmpty()) Text(status)
             }
         }
@@ -231,24 +190,27 @@ internal fun TgCover(path: String?, size: androidx.compose.ui.unit.Dp, modifier:
     }
 }
 
+internal const val SORT_ADDED = 0
+internal const val SORT_NAME = 1
+internal const val SORT_ARTIST = 2
+internal const val SORT_YEAR = 3
+internal const val SORT_PLAYS = 4
+
 @Composable
-private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> Unit) {
+private fun TgLibrary(chatId: Long, onBack: (() -> Unit)?, onChangeChannel: () -> Unit) {
     val context = LocalContext.current
-    val allTracks by TelegramCatalog.tracks.collectAsState()
-    val downloadUtil = LocalDownloadUtil.current
-    val downloads by downloadUtil.downloads.collectAsState()
-    val offlineIds = remember(downloads) { downloads.filterValues { it.state == Download.STATE_COMPLETED }.keys }
-    val usedBytes = remember(downloads) { downloadUtil.downloadCache.cacheSpace }
-    var onlyDownloaded by rememberSaveable { mutableStateOf(false) }
-    val tracks = remember(allTracks, offlineIds, onlyDownloaded) {
-        if (onlyDownloaded) allTracks.filter { it.id in offlineIds } else allTracks
-    }
+    val tracks by TelegramCatalog.tracks.collectAsState()
     val sync by TelegramSync.state.collectAsState()
     val playerConnection = LocalPlayerConnection.current
-    var tab by rememberSaveable { mutableStateOf(0) } // 0 songs, 1 albums, 2 artists
+    val database = LocalDatabase.current
+    val playCounts by database.playCounts().collectAsState(initial = emptyList())
+    val plays = remember(playCounts) { playCounts.associate { it.songId to it.plays } }
+    var tab by rememberSaveable { mutableStateOf(0) } // 0 tracks, 1 projects, 2 artists
+    var sortKey by rememberSaveable { mutableStateOf(SORT_ADDED) }
     var openAlbum by rememberSaveable { mutableStateOf<String?>(null) }
     var artistFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
     var selectMode by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var showEdit by remember { mutableStateOf(false) }
@@ -257,7 +219,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
     LaunchedEffect(chatId) {
         TelegramCatalog.init(context)
         // scanning a big channel takes a while, so don't rescan every time the screen opens;
-        // new uploads come in with the Sync button or after 15 minutes
+        // new uploads come in with the sync button or after 15 minutes
         val prefs = context.getSharedPreferences("tg_poc", Context.MODE_PRIVATE)
         val stale = System.currentTimeMillis() - prefs.getLong("last_sync", 0L) > 15 * 60_000L
         if (stale || TelegramCatalog.tracks.value.isEmpty() || TelegramCatalog.hasUnindexed()) {
@@ -306,19 +268,26 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
         playerConnection?.playQueue(ListQueue(title = title, items = list.map { it.toMediaItem() }, startIndex = index))
     }
 
+    val countText = when (tab) {
+        0 -> "${tracks.size} tracks"
+        1 -> "${albums.size} projects"
+        else -> "${artists.size} artists"
+    }
+
     val header: @Composable () -> Unit = {
         TgHeader(
             tab = tab,
             onTab = { tab = it; openAlbum = null },
+            sortKey = sortKey,
+            onSort = { sortKey = it },
+            countText = countText,
+            searchOpen = searchOpen,
+            onToggleSearch = { searchOpen = !searchOpen; if (!searchOpen) query = "" },
             query = query,
             onQuery = { query = it },
             artistFilter = artistFilter,
             onClearArtist = { artistFilter = null },
             sync = sync,
-            songCount = tracks.size,
-            onlyDownloaded = onlyDownloaded,
-            onToggleDownloaded = { onlyDownloaded = !onlyDownloaded },
-            usedBytes = usedBytes,
             selectMode = selectMode,
             selectedCount = selected.size,
             onToggleSelect = { selectMode = !selectMode; if (!selectMode) selected = emptySet() },
@@ -339,10 +308,16 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
 
     when (tab) {
         0 -> {
-            val list = remember(tracks, q, artistFilter) {
-                tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
+            val list = remember(tracks, q, artistFilter, sortKey, plays) {
+                val base = tracks.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayArtist.lowercase().contains(q) || it.displayAlbum.lowercase().contains(q) }
                     .filter { artistFilter == null || artistsOf(it).any { n -> n == artistFilter } }
-                    .sortedBy { it.title.lowercase() }
+                when (sortKey) {
+                    SORT_NAME -> base.sortedBy { it.title.lowercase() }
+                    SORT_ARTIST -> base.sortedWith(compareBy<TgTrack>({ it.displayArtist.lowercase() }, { it.displayAlbum.lowercase() }, { it.discNo }, { it.trackNo }))
+                    SORT_YEAR -> base.sortedWith(compareByDescending<TgTrack> { it.year }.thenBy { it.title.lowercase() })
+                    SORT_PLAYS -> base.sortedWith(compareByDescending<TgTrack> { plays[it.id] ?: 0 }.thenBy { it.title.lowercase() })
+                    else -> base.sortedByDescending { it.messageId }
+                }
             }
             LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item { header() }
@@ -350,7 +325,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                     Row(
                         Modifier.fillMaxWidth().clickable {
                             if (selectMode) selected = if (t.id in selected) selected - t.id else selected + t.id
-                            else play(list, list.indexOf(t), "Telegram")
+                            else play(list, list.indexOf(t), "Gramtone Vault")
                         }.padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -362,7 +337,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(t.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
-                            Text("${t.displayArtist} • ${t.displayAlbum}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${t.displayArtist} \u2022 ${t.displayAlbum}", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text(fmt(t.durationSec), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         TgDownloadButton(t)
@@ -371,9 +346,16 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
             }
         }
         1 -> {
-            val list = remember(albums, q, artistFilter) {
-                albums.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) }
+            val list = remember(albums, q, artistFilter, sortKey, plays) {
+                val base = albums.filter { q.isEmpty() || it.title.lowercase().contains(q) || it.artist.lowercase().contains(q) }
                     .filter { artistFilter == null || it.tracks.any { t -> artistsOf(t).any { n -> n == artistFilter } } }
+                when (sortKey) {
+                    SORT_NAME -> base.sortedBy { it.title.lowercase() }
+                    SORT_ARTIST -> base.sortedBy { it.artist.lowercase() }
+                    SORT_YEAR -> base.sortedByDescending { it.year }
+                    SORT_PLAYS -> base.sortedByDescending { a -> a.tracks.sumOf { plays[it.id] ?: 0 } }
+                    else -> base.sortedByDescending { a -> a.tracks.maxOf { it.messageId } }
+                }
             }
             LazyVerticalGrid(columns = GridCells.Adaptive(150.dp), contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item(span = { GridItemSpan(maxLineSpan) }) { header() }
@@ -390,13 +372,23 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(a.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                        Text(listOfNotNull(a.artist, a.year.takeIf { it > 0 }?.toString()).joinToString(" • "), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(listOfNotNull(a.artist, a.year.takeIf { it > 0 }?.toString()).joinToString(" \u2022 "), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
         }
         else -> {
-            val list = artists.filter { q.isEmpty() || it.name.lowercase().contains(q) }
+            val byArtist = remember(tracks) {
+                tracks.flatMap { t -> artistsOf(t).map { name -> name to t } }.groupBy({ it.first }, { it.second })
+            }
+            val list = remember(artists, q, sortKey, plays, byArtist) {
+                val base = artists.filter { q.isEmpty() || it.name.lowercase().contains(q) }
+                when (sortKey) {
+                    SORT_PLAYS -> base.sortedByDescending { a -> (byArtist[a.name] ?: emptyList()).sumOf { plays[it.id] ?: 0 } }
+                    SORT_ADDED -> base.sortedByDescending { a -> (byArtist[a.name] ?: emptyList()).maxOfOrNull { it.messageId } ?: 0L }
+                    else -> base
+                }
+            }
             LazyColumn(contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues()) {
                 item { header() }
                 items(list, key = { it.name }) { a ->
@@ -408,7 +400,7 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(a.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
-                            Text(if (a.albums > 0) "${a.albums} albums • ${a.tracks} songs" else "${a.tracks} songs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (a.albums > 0) "${a.albums} projects \u2022 ${a.tracks} tracks" else "${a.tracks} tracks", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -421,42 +413,47 @@ private fun TgLibrary(chatId: Long, onBack: () -> Unit, onChangeChannel: () -> U
 private fun TgHeader(
     tab: Int,
     onTab: (Int) -> Unit,
+    sortKey: Int,
+    onSort: (Int) -> Unit,
+    countText: String,
+    searchOpen: Boolean,
+    onToggleSearch: () -> Unit,
     query: String,
     onQuery: (String) -> Unit,
     artistFilter: String?,
     onClearArtist: () -> Unit,
     sync: TelegramSync.State,
-    songCount: Int,
-    onlyDownloaded: Boolean,
-    onToggleDownloaded: () -> Unit,
-    usedBytes: Long,
     selectMode: Boolean,
     selectedCount: Int,
     onToggleSelect: () -> Unit,
     onEditSelected: () -> Unit,
     onSelectAll: () -> Unit,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onSync: () -> Unit,
     onChangeChannel: () -> Unit,
     onStop: () -> Unit,
 ) {
+    var sortMenu by remember { mutableStateOf(false) }
+    val options = if (tab == 2) {
+        listOf(SORT_ADDED to "Date added", SORT_NAME to "Name", SORT_PLAYS to "Plays")
+    } else {
+        listOf(SORT_ADDED to "Date added", SORT_NAME to "Name", SORT_ARTIST to "Artist", SORT_YEAR to "Year", SORT_PLAYS to "Plays")
+    }
+    val active = MaterialTheme.colorScheme.primary
+    val idle = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = true,
-                onClick = onBack,
-                label = { Text("Telegram") },
-                shape = RoundedCornerShape(16.dp),
-                leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
-            )
-            listOf("Songs", "Albums", "Artists").forEachIndexed { i, label ->
-                FilterChip(selected = tab == i, onClick = { onTab(i) }, label = { Text(label) }, shape = RoundedCornerShape(16.dp))
+            if (onBack != null) {
+                FilterChip(
+                    selected = true,
+                    onClick = onBack,
+                    label = { Text("Gramtone Vault") },
+                    shape = RoundedCornerShape(16.dp),
+                    leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
+                )
             }
-            FilterChip(selected = onlyDownloaded, onClick = onToggleDownloaded, label = { Text("Downloaded") }, shape = RoundedCornerShape(16.dp))
-            FilterChip(selected = selectMode, onClick = onToggleSelect, label = { Text(if (selectMode) "Done" else "Select") }, shape = RoundedCornerShape(16.dp))
-            if (selectMode) {
-                FilterChip(selected = false, onClick = onSelectAll, label = { Text("All") }, shape = RoundedCornerShape(16.dp))
-                FilterChip(selected = selectedCount > 0, onClick = onEditSelected, label = { Text("Edit ($selectedCount)") }, shape = RoundedCornerShape(16.dp))
+            listOf("Tracks", "Projects", "Artists").forEachIndexed { i, label ->
+                FilterChip(selected = tab == i, onClick = { onTab(i) }, label = { Text(label) }, shape = RoundedCornerShape(16.dp))
             }
             if (artistFilter != null) {
                 FilterChip(
@@ -467,15 +464,48 @@ private fun TgHeader(
                     leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
                 )
             }
+            if (selectMode) {
+                FilterChip(selected = false, onClick = onSelectAll, label = { Text("All") }, shape = RoundedCornerShape(16.dp))
+                FilterChip(selected = selectedCount > 0, onClick = onEditSelected, label = { Text("Edit ($selectedCount)") }, shape = RoundedCornerShape(16.dp))
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQuery,
-            placeholder = { Text("Search your Telegram music") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                IconButton(onClick = { sortMenu = true }) {
+                    Icon(painterResource(R.drawable.gt_sort), contentDescription = "Sort", tint = idle)
+                }
+                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                    options.forEach { (key, label) ->
+                        DropdownMenuItem(
+                            text = { Text(if (key == sortKey) "\u2713  $label" else label) },
+                            onClick = { onSort(key); sortMenu = false },
+                        )
+                    }
+                }
+            }
+            Text(countText, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+            IconButton(onClick = onToggleSearch) {
+                Icon(painterResource(R.drawable.search), contentDescription = "Search", tint = if (searchOpen) active else idle)
+            }
+            IconButton(onClick = onToggleSelect) {
+                Icon(painterResource(R.drawable.select_all), contentDescription = "Select", tint = if (selectMode) active else idle)
+            }
+            IconButton(onClick = onSync) {
+                Icon(painterResource(R.drawable.sync), contentDescription = "Sync", tint = idle)
+            }
+            IconButton(onClick = onChangeChannel) {
+                Icon(painterResource(R.drawable.settings), contentDescription = "Change channel", tint = idle)
+            }
+        }
+        if (searchOpen) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                placeholder = { Text("Search your Gramtone Vault") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         when (sync) {
             is TelegramSync.State.Scanning ->
                 TgSyncRow("Scanning channel... ${sync.found} found", null, onStop, onChangeChannel)
@@ -487,24 +517,14 @@ private fun TgHeader(
                     onChangeChannel,
                 )
             is TelegramSync.State.Failed -> {
-                Text("Sync failed: ${sync.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
-                Row {
-                    TextButton(onClick = onSync) { Text("Retry") }
-                    TextButton(onClick = onChangeChannel) { Text("Change channel") }
-                }
+                Text("Sync failed: ${sync.message}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 4.dp))
+                TextButton(onClick = onSync) { Text("Retry") }
             }
-            TelegramSync.State.Idle -> {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (usedBytes > 0) "$songCount songs \u2022 ${fmtBytes(usedBytes)} downloaded" else "$songCount songs", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onSync) { Text("Sync") }
-                    TextButton(onClick = onChangeChannel) { Text("Change channel") }
-                }
-            }
+            TelegramSync.State.Idle -> Unit
         }
     }
 }
 
-/** Scanning/indexing status with a Stop button; Change channel stays available the whole time. */
 @Composable
 private fun TgSyncRow(text: String, progress: Float?, onStop: () -> Unit, onChangeChannel: () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
@@ -529,7 +549,7 @@ private fun TgAlbumDetail(album: TgAlbum, onClose: () -> Unit, onPlay: (Int) -> 
                 FilterChip(
                     selected = true,
                     onClick = onClose,
-                    label = { Text("Albums") },
+                    label = { Text("Projects") },
                     shape = RoundedCornerShape(16.dp),
                     leadingIcon = { Icon(painterResource(R.drawable.close), contentDescription = null) },
                 )
@@ -541,7 +561,7 @@ private fun TgAlbumDetail(album: TgAlbum, onClose: () -> Unit, onPlay: (Int) -> 
                         Text(album.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(album.artist, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            listOfNotNull(album.year.takeIf { it > 0 }?.toString(), "${album.tracks.size} songs").joinToString(" • "),
+                            listOfNotNull(album.year.takeIf { it > 0 }?.toString(), "${album.tracks.size} tracks").joinToString(" • "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -640,7 +660,7 @@ private fun TgEditDialog(
     var trackNo by remember { mutableStateOf(single?.trackNo?.takeIf { it > 0 }?.toString() ?: "") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (count == 1) "Edit song" else "Edit $count songs") },
+        title = { Text(if (count == 1) "Edit track" else "Edit $count tracks") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (count != 1) {
